@@ -1,0 +1,24 @@
+# Build outputs
+ksynth
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Local binaries / experiments
+k
+
+# Editor metadata
+.vscode/
+.idea/
+
+# OS / temp files
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# Logs
+*.log
