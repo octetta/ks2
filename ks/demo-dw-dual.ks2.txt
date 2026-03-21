@@ -1,0 +1,47 @@
+# KS2 Golden Demo
+# DW8000-inspired dual-wavetable mono lead with glide and ADSR.
+# Run from REPL with:
+#   :script ks/demo-dw-dual.ks2.txt
+
+# Build and bank two different DW-style wavetables.
+:load ks/dw8k-01.ks
+:wt 0 W
+:sleep 120ms
+
+:load ks/dw8k-07.ks
+:wt 1 W
+:sleep 120ms
+
+# Route osc A and B to different slots.
+:usewt 0 1
+
+# Voice shaping/modulation.
+:detune -4.5 4.5
+:pd 0.28
+:lfo 4.8 0.010
+
+:envamp 8 140 0.55 260
+:envpd 12 90 0.20 180
+:envpitch 5 50 -0.02 120
+:envdepth filter 900
+:envdepth pd 0.35
+:envdepth pitch 0.06
+
+# Performance mode for gliding lead lines.
+:chmode 0 mono
+:glide 0 180
+:modstate
+:sleep 250ms
+
+# Phrase.
+:noteon 0 60 110
+:sleep 0.35
+:noteon 0 67 110
+:sleep 250ms
+:noteoff 0 67
+:sleep 150ms
+:noteon 0 72 110
+:sleep 300ms
+:noteoff 0 72
+:sleep 120ms
+:noteoff 0 60

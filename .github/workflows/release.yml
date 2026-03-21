@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    name: Validate Tag and Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate VERSION SemVer
+        run: make check-version
+
+      - name: Validate Git Tag Matches VERSION
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          FILE_VERSION="$(cat VERSION)"
+          echo "tag=$TAG_VERSION"
+          echo "file=$FILE_VERSION"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "Tag/version mismatch: tag=$TAG_VERSION file=$FILE_VERSION"
+            exit 1
+          fi
+          echo "version=$FILE_VERSION" >> "$GITHUB_OUTPUT"
+
+  build-artifacts:
+    name: Build Artifact (${{ matrix.os }})
+    needs: validate-tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: make -j4
+
+      - name: Package Artifact
+        shell: bash
+        run: |
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          ARTIFACT="ks2-${VERSION}-${OS}-${ARCH}"
+          mkdir -p dist
+          cp ksynth "dist/${ARTIFACT}"
+          cp VERSION CHANGELOG.md STATUS.md MIGRATION.md "dist/"
+          tar -C dist -czf "dist/${ARTIFACT}.tar.gz" "${ARTIFACT}" VERSION CHANGELOG.md STATUS.md MIGRATION.md
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: dist/*.tar.gz
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*.tar.gz
