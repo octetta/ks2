@@ -58,7 +58,7 @@ Functions eliminate repetition in multi-voice scripts and make the intent readab
 
 ```
 / sine wave, 1 second, 440 Hz
-N: 44100
+N: p0
 T: !N
 W: w s +\(N#(440*(p2%p0)))
 ```
@@ -80,7 +80,7 @@ Build tables using the phase accumulator pattern, using a separate variable for 
 N: 1024
 P: +\(N#(p2%N))
 T: s P
-D: 88200
+D: p0*2
 W: w T t 440 D
 ```
 
@@ -89,7 +89,7 @@ W: w T t 440 D
 N: 1024
 P: +\(N#(1%N))
 T: (2*P)-1
-D: 44100
+D: p0
 W: w T t 220 D
 ```
 
@@ -98,7 +98,7 @@ W: w T t 220 D
 N: 1024
 P: +\(N#(1%N))
 T: (2*a((2*P)-1))-1
-D: 44100
+D: p0
 W: w T t 330 D
 ```
 
@@ -107,7 +107,7 @@ W: w T t 330 D
 N: 1024
 P: +\(N#(1%N))
 T: (2*(P<0.5))-1
-D: 44100
+D: p0
 W: w T t 220 D
 ```
 
@@ -118,7 +118,7 @@ P: +\(N#(p2%N))
 I: 2.5
 T: s P+(I*s P)
 M: n69          / MIDI note 69 = 440 Hz; assign to M so "T t M D" works
-D: 88200
+D: p0*2
 W: w T t M D
 ```
 
@@ -130,7 +130,7 @@ The phase accumulator pattern `+\(N#F)` where `F` is a per-sample phase incremen
 
 ```
 / sawtooth at 220 Hz, 1 second (via harmonic sum)
-N: 44100
+N: p0
 T: !N
 F: 220*(p2%p0)
 P: +\(N#F)
@@ -144,7 +144,7 @@ Right-associativity makes FM natural. `s P + Q` parses as `s(P + s(Q))` — carr
 
 ```
 / FM bell: fast index decay, slow amplitude decay
-N: 88200
+N: p0*2
 T: !N
 A: e(T*(0-3%N))
 I: 3.5*e(T*(0-40%N))
@@ -178,7 +178,7 @@ W: w P $ A
 **Exponential decay** — a sine tone that fades out over 2 seconds:
 
 ```
-N: 88200
+N: p0*2
 T: !N
 A: e(T*(0-3%N))
 P: +\(N#(440*(p2%p0)))
@@ -190,7 +190,7 @@ Adjust the `3` to taste — larger decays faster, smaller lingers longer. At `k=
 **Percussive rise-and-fall** — a thump that swells briefly then fades:
 
 ```
-N: 44100
+N: p0
 T: !N
 A: T*e(T*(0-8%N))
 P: +\(N#(180*(p2%p0)))
@@ -202,7 +202,7 @@ The peak lands at sample `N/k` — here `44100/8` ≈ 5500 samples ≈ 125ms in.
 **Two envelopes on one voice** — fast index decay for a bright attack, slow amplitude decay for the body (the FM bell pattern):
 
 ```
-N: 88200
+N: p0*2
 T: !N
 A: e(T*(0-3%N))
 I: 3.5*e(T*(0-40%N))
@@ -218,7 +218,7 @@ W: w A*(s P+(I*s Q))
 **Soft clipping** — `d` applies `tanh(3x)`, rounding peaks without hard discontinuities. Useful after loud envelopes:
 
 ```
-N: 44100
+N: p0
 T: !N
 A: T*e(T*(0-5%N))
 P: +\(N#(220*(p2%p0)))
@@ -240,7 +240,7 @@ Optional resonance as second parameter: `0.2 1.5 f signal`. Resonance 0–3.9. N
 `freq_hz g signal` — same filter, cutoff in Hz directly. Optional resonance: `800 2.0 g signal`. Accepts a modulation vector for swept cutoff:
 
 ```
-N: 44100
+N: p0
 T: !N
 / LFO sweeping cutoff 200–1200 Hz at 3 Hz
 L: 700+(500*s +\(N#(3*(p2%N))))
@@ -252,7 +252,7 @@ W: w L g r T
 Highpass — subtract the lowpass from the signal. Clean at zero resonance. With resonance, `signal - L` develops a shelf artefact near cutoff — usable but not a true resonant highpass:
 
 ```
-N: 44100
+N: p0
 T: !N
 R: r T
 L: 0.1 f R
@@ -262,7 +262,7 @@ W: w R-L
 Bandpass — subtract two lowpass filters at different cutoffs. Works correctly at any resonance:
 
 ```
-N: 44100
+N: p0
 T: !N
 R: r T
 H: 0.4 f R      / lowpass ~3 kHz
@@ -303,7 +303,7 @@ Z: K,K,S,K,K,S,K,K,S,C,C,C,O,S,S
 **Pitched metallic noise** — white noise through a comb filter resonates strongly at the frequency matching the delay period and its harmonics. Delay of `SR/freq` samples tunes the resonance:
 
 ```
-N: 44100
+N: p0
 T: !N
 R: r T
 W: w 100 0.9 y R      / comb resonance at ~441 Hz
@@ -314,7 +314,7 @@ Change `100` to `200` for ~220 Hz, `50` for ~882 Hz. Higher gain = stronger reso
 **Echo on a decaying sound** — the echo is only audible as a distinct repeat when the source has decayed before the delayed copy arrives. A bell with a 300ms echo:
 
 ```
-N: 88200
+N: p0*2
 T: !N
 C: p2%p0
 A: e(T*(0-4%N))
@@ -328,7 +328,7 @@ W: w 13230 0.5 y S    / 300ms echo at 50% level
 **Resonant frequency boost** — when the delay exactly matches the period of the input frequency, each feedback cycle arrives perfectly in phase and the amplitude builds dramatically:
 
 ```
-N: 44100
+N: p0
 T: !N
 C: p2%p0
 S: s +\(N#(220*C))
@@ -342,7 +342,7 @@ W: w 200 0.9 y S      / delay=200 = one period of 220 Hz, strong resonance
 **Two voices panned left and right:**
 
 ```
-N: 44100
+N: p0
 T: !N
 C: p2%p0
 / left: bell at 440 Hz

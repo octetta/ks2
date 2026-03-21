@@ -7,6 +7,8 @@
 K vars[26] = {0};   // A-Z user variables
 K args[2] = {0};    // x, y function arguments
 
+#define KSYNTH_SR 44100.0
+
 /* --- Safe Value Helper --- */
 
 static inline double safe_val(double v) {
@@ -280,7 +282,7 @@ K mo(char c, K b) {
             case '_': x->f[i] = floor(v); break;
             case 'r': x->f[i] = ((double)rand() / (double)RAND_MAX) * 2.0 - 1.0; break;
             case 'p': {
-                if (v == 0) x->f[i] = 44100;
+                if (v == 0) x->f[i] = KSYNTH_SR;
                 else x->f[i] = 3.14159265358979323846 * v;
                 break;
             }
@@ -399,7 +401,7 @@ K dy(char c, K a, K b) {
         int tbl_len = a->n;
         if (n_out < 1 || tbl_len < 1) { k_free(a); k_free(b); return k_new(0); }
 
-        double phase_inc = freq_hz * (double)tbl_len / 44100.0;
+        double phase_inc = freq_hz * (double)tbl_len / KSYNTH_SR;
         double phase     = 0.0;
         x = k_new(n_out);
 
@@ -475,7 +477,7 @@ K dy(char c, K a, K b) {
 
         for (int i = 0; i < b->n; i++) {
             double f_hz    = (a->n == b->n) ? a->f[i] : static_f;
-            double f_coeff = 2.0 * sin(M_PI * f_hz / 44100.0);
+            double f_coeff = 2.0 * sin(M_PI * f_hz / KSYNTH_SR);
             if (f_coeff > 1.99) f_coeff = 1.99;
             double hp = b->f[i] - s0 - damp * s1;
             s1 += f_coeff * hp;

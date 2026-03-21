@@ -11,6 +11,7 @@
 #endif
 
 #define KS_MAX_LITERAL 1024
+#define KS_SR 44100.0
 
 static K* g_vars[26];
 static K* g_args[2];
@@ -440,7 +441,7 @@ K* mo(char c, K* b) {
                 break;
             case '_': x->f[i] = floor(v); break;
             case 'r': x->f[i] = ((double)rand() / (double)RAND_MAX) * 2.0 - 1.0; break;
-            case 'p': x->f[i] = (v == 0.0) ? 44100.0 : M_PI * v; break;
+            case 'p': x->f[i] = (v == 0.0) ? KS_SR : M_PI * v; break;
             case 'i': x->f[i] = b->f[b->n - 1 - i]; break;
             case 'x': x->f[i] = exp(-5.0 * v); break;
             case 'd': x->f[i] = tanh(v * 3.0); break;
@@ -580,7 +581,7 @@ K* dy(char c, K* a, K* b) {
             return k_new(0);
         }
 
-        phase_inc = freq_hz * (double)tbl_len / 44100.0;
+        phase_inc = freq_hz * (double)tbl_len / KS_SR;
         phase = 0.0;
         x = k_new(n_out);
         if (!x) {
@@ -666,7 +667,7 @@ K* dy(char c, K* a, K* b) {
         }
         for (i = 0; i < b->n; i++) {
             double f_hz = (a->n == b->n) ? a->f[i] : static_f;
-            double f_coeff = 2.0 * sin(M_PI * f_hz / 44100.0);
+            double f_coeff = 2.0 * sin(M_PI * f_hz / KS_SR);
             double hp;
 
             if (f_coeff > 1.99) f_coeff = 1.99;
@@ -1112,18 +1113,18 @@ void p(K* x) {
         return;
     }
 
-    limit = x->n < 64 ? x->n : 64;
-    putchar('[');
+    limit = x->n < 10 ? x->n : 10;
+    putchar('(');
     for (i = 0; i < limit; i++) {
         if (i) {
-            printf(", ");
+            printf(" ");
         }
         printf("%g", x->f[i]);
     }
     if (limit < x->n) {
-        printf(", ... len=%d", x->n);
+        printf(" ... %g", x->f[x->n-1]);
     }
-    printf("]\n");
+    printf(") / len:%d\n", x->n);
 }
 
 K* ksynth_render_sample(void) {
