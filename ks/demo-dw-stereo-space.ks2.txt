@@ -1,0 +1,56 @@
+# DW Stereo Space Demo
+# Showcases: filtermode/keytrack/fdrive + pan spread + pan LFO + channel delay send
+
+:load ks/dw8k-01
+:wt 0 W
+:load ks/dw8k-02
+:wt 1 W
+:usewt 0 1
+
+:detune -2.6 2.6
+:pd 0.14
+:lfo 3.6 0.003
+
+:filtermode bp
+:filter 1300 0.62
+:keytrack 1
+:fdrive 2.4
+:envdepth filter 1300
+
+:envamp 3 120 0.52 220
+:envpd 4 90 0.20 180
+:envpitch 1.2 55 -0.02 120
+
+:pan 0 0.0
+:panspread 0 0.55
+:panlfo 0 0.30
+:delay 370 0.40 0.30
+:chsenddelay 0 -6
+:gain 6
+
+:modstate
+:sleep 200ms
+
+:noteon 0 40 116
+:sleep 220ms
+:noteon 0 43 112
+:sleep 180ms
+:noteon 0 47 114
+:sleep 260ms
+:noteoff 0 47
+:sleep 80ms
+:noteoff 0 43
+:sleep 80ms
+:noteoff 0 40
+:sleep 160ms
+
+:noteon 0 52 110
+:sleep 220ms
+:noteoff 0 52
+:sleep 80ms
+:noteon 0 47 112
+:sleep 260ms
+:noteoff 0 47
+:sleep 80ms
+
+:chstate 0

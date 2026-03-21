@@ -1,0 +1,143 @@
+# KS2 Demo: DW Mono Glide Bass (Saw + Square-ish)
+# Uses DW wave 01 (saw) + wave 02 (odd-harmonic/clarinet, square-like)
+# Usage:
+#   :script ks/demo-dw-bassline-mono-saw-square.ks2.txt
+
+:load ks/dw8k-01.ks
+:wt 0 W
+:sleep 50ms
+
+:load ks/dw8k-02.ks
+:wt 1 W
+:sleep 50ms
+
+:usewt 0 1
+:detune -2.8 2.8
+:pd 0.14
+:lfo 2.8 0.002
+
+# Mono lead/bass envelope with quick bite.
+:envamp 2.2 85 0.50 90
+:envpd 3.5 65 0.16 90
+:envpitch 0.8 28 -0.01 45
+:envdepth filter 1250
+:envdepth pd 0.22
+:envdepth pitch 0.028
+
+# Mild drive to add bark; tweak live.
+:gain 8
+
+# Mono + glide = connected line.
+:chmode 0 mono
+:glide 0 95
+:modstate
+:sleep 180ms
+
+# Technique used here for octave punch in mono mode:
+# very short high-octave pre-hit, then root note body.
+
+# Bar 1
+:noteon 0 52 112
+:sleep 32ms
+:noteoff 0 52
+:noteon 0 40 124
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 52 108
+:sleep 28ms
+:noteoff 0 52
+:noteon 0 40 120
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 55 110
+:sleep 30ms
+:noteoff 0 55
+:noteon 0 43 122
+:sleep 120ms
+:noteoff 0 43
+:sleep 20ms
+
+# Glide accent (held transition)
+:noteon 0 43 118
+:sleep 70ms
+:noteon 0 47 122
+:sleep 90ms
+:noteoff 0 47
+:sleep 20ms
+
+# Bar 2
+:noteon 0 52 110
+:sleep 30ms
+:noteoff 0 52
+:noteon 0 40 124
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 57 108
+:sleep 30ms
+:noteoff 0 57
+:noteon 0 45 120
+:sleep 120ms
+:noteoff 0 45
+:sleep 20ms
+
+:noteon 0 55 108
+:sleep 30ms
+:noteoff 0 55
+:noteon 0 43 120
+:sleep 120ms
+:noteoff 0 43
+:sleep 20ms
+
+:noteon 0 50 114
+:sleep 35ms
+:noteoff 0 50
+:noteon 0 38 126
+:sleep 150ms
+:noteoff 0 38
+:sleep 40ms
+
+# Bar 3 (more glide motion)
+:noteon 0 52 108
+:sleep 26ms
+:noteoff 0 52
+:noteon 0 40 122
+:sleep 100ms
+:noteon 0 43 120
+:sleep 92ms
+:noteon 0 47 122
+:sleep 96ms
+:noteoff 0 47
+:sleep 18ms
+
+:noteon 0 62 108
+:sleep 24ms
+:noteoff 0 62
+:noteon 0 50 122
+:sleep 110ms
+:noteoff 0 50
+:sleep 20ms
+
+# Bar 4 turnaround
+:noteon 0 47 112
+:sleep 26ms
+:noteoff 0 47
+:noteon 0 35 126
+:sleep 170ms
+:noteoff 0 35
+:sleep 70ms
+
+:noteoff 0 35
+:noteoff 0 38
+:noteoff 0 40
+:noteoff 0 43
+:noteoff 0 45
+:noteoff 0 47
+:noteoff 0 50
+
+:chstate 0

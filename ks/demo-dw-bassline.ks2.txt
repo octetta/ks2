@@ -1,0 +1,135 @@
+# KS2 Demo: DW8000-Vein Bassline
+# Usage from repo root:
+#   :script ks/demo-dw-bassline.ks2.txt
+# Usage from ks/ directory:
+#   :script demo-dw-bassline.ks2.txt
+
+# Build two DW-style tables with complementary harmonic flavor.
+:load ks/dw8k-04.ks
+:wt 0 W
+:sleep 80ms
+
+:load ks/dw8k-12.ks
+:wt 1 W
+:sleep 80ms
+
+# Dual-osc setup with slight spread.
+:usewt 0 1
+:detune -3.2 3.2
+
+# DW-style motion: subtle PD + tiny vibrato.
+:pd 0.16
+:lfo 3.4 0.004
+
+# Bass voicing: fast attack, short decay, medium sustain, short release.
+:envamp 3 110 0.48 95
+:envpd 5 85 0.18 110
+:envpitch 0.8 42 0.00 60
+
+# Envelope depths tuned for a plucky, speaking front edge.
+:envdepth filter 1200
+:envdepth pd 0.24
+:envdepth pitch 0.03
+
+# Mono line with glide for connective slides.
+:chmode 0 mono
+:glide 0 75
+:modstate
+:sleep 250ms
+
+# Tempo helper (approx 122 BPM, sixteenth ~= 123ms)
+# Pattern: E1/E2 minor-ish with chromatic movement and glide accents.
+
+# Bar 1
+:noteon 0 40 118
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 40 112
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 43 114
+:sleep 120ms
+:noteon 0 45 116
+:sleep 95ms
+:noteoff 0 45
+:sleep 45ms
+
+:noteon 0 47 114
+:sleep 120ms
+:noteoff 0 47
+:sleep 20ms
+
+# Bar 2
+:noteon 0 40 118
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 52 112
+:sleep 120ms
+:noteoff 0 52
+:sleep 20ms
+
+:noteon 0 45 114
+:sleep 120ms
+:noteoff 0 45
+:sleep 20ms
+
+:noteon 0 43 112
+:sleep 120ms
+:noteoff 0 43
+:sleep 20ms
+
+# Bar 3 (slide phrase)
+:noteon 0 40 118
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 43 114
+:sleep 120ms
+:noteon 0 47 118
+:sleep 110ms
+:noteon 0 50 120
+:sleep 120ms
+:noteoff 0 50
+:sleep 20ms
+
+:noteon 0 47 114
+:sleep 120ms
+:noteoff 0 47
+:sleep 20ms
+
+# Bar 4 (turnaround)
+:noteon 0 38 116
+:sleep 120ms
+:noteoff 0 38
+:sleep 20ms
+
+:noteon 0 40 114
+:sleep 120ms
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 43 114
+:sleep 120ms
+:noteoff 0 43
+:sleep 20ms
+
+:noteon 0 35 120
+:sleep 160ms
+:noteoff 0 35
+:sleep 80ms
+
+# Safety release.
+:noteoff 0 40
+:noteoff 0 43
+:noteoff 0 45
+:noteoff 0 47
+:noteoff 0 50
+
+:chstate 0

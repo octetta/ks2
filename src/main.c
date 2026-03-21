@@ -6,10 +6,16 @@
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
+#include <dirent.h>
 
 #if !defined(_WIN32)
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
+#include <glob.h>
+#else
+#include <direct.h>
+#include <windows.h>
 #endif
 
 #include "ksynth.h"
@@ -42,6 +48,7 @@ typedef struct {
 
 static HostState g_host;
 static char g_history_path[PATH_MAX];
+static char g_kspath[PATH_MAX];
 static volatile sig_atomic_t g_sigint_hits = 0;
 static volatile sig_atomic_t g_sigint_notice = 0;
 static volatile sig_atomic_t g_sigint_exit = 0;
@@ -75,6 +82,13 @@ static const char *g_repl_commands[] = {
     ":trigsample",
     ":lfo",
     ":pd",
+    ":filter",
+    ":cutoff",
+    ":res",
+    ":keytrack",
+    ":filtermode",
+    ":fdrive",
+    ":gain",
     ":detune",
     ":envamp",
     ":envpd",
@@ -83,9 +97,19 @@ static const char *g_repl_commands[] = {
     ":modstate",
     ":chmode",
     ":glide",
+    ":pan",
+    ":panspread",
+    ":panlfo",
+    ":chsenddelay",
+    ":delay",
     ":noteon",
     ":noteoff",
+    ":trigwt",
+    ":chstate",
+    ":kspath",
     ":sleep",
+    ":ls",
+    ":cd",
     ":slots",
     NULL
 };
@@ -131,6 +155,46 @@ static int ks_readline(const char *prompt, char *buf, int max_line) {
     bestlineFree(line);
     return (int)len;
 #endif
+}
+
+static int ks_terminal_width(void) {
+#if defined(_WIN32)
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    HANDLE h;
+    int width;
+
+    h = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h == INVALID_HANDLE_VALUE) {
+        return 80;
+    }
+    if (!GetConsoleScreenBufferInfo(h, &csbi)) {
+        return 80;
+    }
+    width = (int)(csbi.srWindow.Right - csbi.srWindow.Left + 1);
+    return width > 20 ? width : 80;
+#else
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 20) {
+        return (int)ws.ws_col;
+    }
+    return 80;
+#endif
+}
+
+static char *ks_strdup(const char *s) {
+    size_t n;
+    char *copy;
+
+    if (!s) {
+        return NULL;
+    }
+    n = strlen(s) + 1;
+    copy = malloc(n);
+    if (!copy) {
+        return NULL;
+    }
+    memcpy(copy, s, n);
+    return copy;
 }
 
 static void ks_handle_sigint(int signo) {
@@ -264,8 +328,8 @@ static void print_repl_help(void) {
     puts("    :help   show this help");
     puts("    :version show app version");
     puts("    :quit   exit");
-    puts("    :load <file.ks>   evaluate a ksynth patch file");
-    puts("    :script <file.txt> run REPL commands from a text file");
+    puts("    :load <file[.ks]> evaluate a ksynth patch file (.ks guessed if omitted)");
+    puts("    :script <file>    run REPL commands from a text file (.ks2.txt/.txt guessed)");
     puts("    :play <var>       legacy alias for :playsample <var>");
     puts("    :playwt <var>     stop the sequence and audition a vector as a wavetable");
     puts("    :playsample <var> stop the sequence and audition a vector as a sample");
@@ -278,6 +342,13 @@ static void print_repl_help(void) {
     puts("    :trigsample <hex> <note> <db> trigger a banked sample slot at fractional midi note and dB gain");
     puts("    :lfo <rate_hz> <depth> set pitch LFO rate/depth");
     puts("    :pd <amount> set phase distortion amount (-0.95..0.95)");
+    puts("    :filter <cutoff_hz> <res> set filter cutoff/resonance");
+    puts("    :cutoff <hz> set filter cutoff (40Hz..Nyquist*0.45)");
+    puts("    :res <value> set filter resonance (0.05..1.20)");
+    puts("    :keytrack <0..1.5> set filter keyboard tracking amount");
+    puts("    :filtermode <lp|bp|hp> set filter mode");
+    puts("    :fdrive <0.1..12> set pre-filter drive amount");
+    puts("    :gain <db> set synth master gain in dB (-96.0..+24.0, >0 can overdrive)");
     puts("    :detune <cents_a> <cents_b> set osc detune in cents");
     puts("    :envamp <a_ms> <d_ms> <s> <r_ms> set amp envelope");
     puts("    :envpd <a_ms> <d_ms> <s> <r_ms> set pd envelope");
@@ -286,11 +357,220 @@ static void print_repl_help(void) {
     puts("    :modstate print current modulation/envelope settings");
     puts("    :chmode <hex> <mono|poly> set per-channel voice mode");
     puts("    :glide <hex> <ms> set mono glide time per channel");
+    puts("    :pan <hex> <-1..1> set per-channel pan (left..right)");
+    puts("    :panspread <hex> <0..1> set per-voice random pan spread around channel pan");
+    puts("    :panlfo <hex> <0..1> set per-channel pan LFO depth");
+    puts("    :chsenddelay <hex> <db> set per-channel delay send in dB");
+    puts("    :delay <ms> <feedback> <wet> set global delay parameters");
     puts("    :noteon <hex> <note> <vel127> trigger channel note-on");
     puts("    :noteoff <hex> <note> trigger channel note-off");
+    puts("    :trigwt <hex> <note> <vel127> trigger wavetable voice on channel");
+    puts("    :chstate <hex> print channel mono/poly/glide/note state");
+    puts("    :kspath [path] show or set KS asset base path for :load/:script fallback");
     puts("    :sleep <seconds|ms> pause command stream (example: 0.25 or 250ms)");
+    puts("    :ls [path|pattern] list directory entries; supports simple wildcards (*, ?)");
+    puts("    :cd [path] change directory (with no path, print current directory)");
     puts("    :playwtraw <var> play wavetable with modulation minimized");
     puts("    :slots            list filled slots");
+}
+
+static int ks_chdir(const char *path) {
+#if defined(_WIN32)
+    return _chdir(path);
+#else
+    return chdir(path);
+#endif
+}
+
+static char *ks_getcwd(char *buf, size_t size) {
+#if defined(_WIN32)
+    return _getcwd(buf, (int)size);
+#else
+    return getcwd(buf, size);
+#endif
+}
+
+static int ks_is_abs_path(const char *path) {
+    if (!path || path[0] == '\0') {
+        return 0;
+    }
+#if defined(_WIN32)
+    if ((isalpha((unsigned char)path[0]) && path[1] == ':') ||
+        (path[0] == '\\' && path[1] == '\\')) {
+        return 1;
+    }
+    return 0;
+#else
+    return path[0] == '/';
+#endif
+}
+
+static int ks_file_exists(const char *path) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        return 0;
+    }
+    fclose(fp);
+    return 1;
+}
+
+static int ks_try_compose_path(char *out, size_t out_size, const char *base, const char *tail) {
+    int n;
+    if (!out || out_size == 0 || !base || !tail) {
+        return -1;
+    }
+    n = snprintf(out, out_size, "%s/%s", base, tail);
+    if (n < 0 || (size_t)n >= out_size) {
+        return -1;
+    }
+    return 0;
+}
+
+static int ks_has_extension(const char *path) {
+    const char *dot;
+    const char *slash1;
+    const char *slash2;
+    const char *sep;
+
+    if (!path || path[0] == '\0') {
+        return 0;
+    }
+    dot = strrchr(path, '.');
+    if (!dot || dot == path) {
+        return 0;
+    }
+    slash1 = strrchr(path, '/');
+    slash2 = strrchr(path, '\\');
+    sep = slash1;
+    if (slash2 && (!sep || slash2 > sep)) {
+        sep = slash2;
+    }
+    return sep ? dot > sep : 1;
+}
+
+static int ks_try_path_candidates(const char *candidate, char *resolved, size_t resolved_size) {
+    char pathbuf[PATH_MAX];
+
+    if (!candidate || !resolved || resolved_size == 0) {
+        return -1;
+    }
+    if (strlen(candidate) < resolved_size) {
+        strcpy(resolved, candidate);
+    } else {
+        return -1;
+    }
+    if (ks_file_exists(resolved)) {
+        return 0;
+    }
+    if (g_kspath[0] == '\0' || ks_is_abs_path(candidate)) {
+        return -1;
+    }
+
+    if ((strncmp(candidate, "ks/", 3) == 0 || strncmp(candidate, "ks\\", 3) == 0) &&
+        ks_try_compose_path(pathbuf, sizeof(pathbuf), g_kspath, candidate + 3) == 0 &&
+        ks_file_exists(pathbuf)) {
+        if (strlen(pathbuf) < resolved_size) {
+            strcpy(resolved, pathbuf);
+            return 0;
+        }
+        return -1;
+    }
+
+    if (ks_try_compose_path(pathbuf, sizeof(pathbuf), g_kspath, candidate) == 0 &&
+        ks_file_exists(pathbuf)) {
+        if (strlen(pathbuf) < resolved_size) {
+            strcpy(resolved, pathbuf);
+            return 0;
+        }
+        return -1;
+    }
+
+    return -1;
+}
+
+static int ks_resolve_input_path(const char *input, char *resolved, size_t resolved_size,
+                                 const char *exts[], int ext_count) {
+    const char *trimmed = input;
+    char candidate[PATH_MAX];
+    int i;
+
+    if (!input || !resolved || resolved_size == 0) {
+        return -1;
+    }
+    while (*trimmed && isspace((unsigned char)*trimmed)) {
+        trimmed++;
+    }
+    if (*trimmed == '\0') {
+        return -1;
+    }
+
+    if (ks_try_path_candidates(trimmed, resolved, resolved_size) == 0) {
+        return 0;
+    }
+
+    if (ks_has_extension(trimmed)) {
+        return -1;
+    }
+
+    for (i = 0; i < ext_count; i++) {
+        int n;
+        if (!exts[i] || exts[i][0] == '\0') {
+            continue;
+        }
+        n = snprintf(candidate, sizeof(candidate), "%s%s", trimmed, exts[i]);
+        if (n < 0 || (size_t)n >= sizeof(candidate)) {
+            continue;
+        }
+        if (ks_try_path_candidates(candidate, resolved, resolved_size) == 0) {
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+static void ks_print_path_context(const char *kind, const char *requested, const char *suffix_hint) {
+    char cwd[PATH_MAX];
+
+    printf("(could not read %s: %s)\n", kind, requested ? requested : "");
+    if (suffix_hint && suffix_hint[0] != '\0') {
+        printf("(tip: try %s)\n", suffix_hint);
+    }
+    if (ks_getcwd(cwd, sizeof(cwd))) {
+        printf("(cwd: %s)\n", cwd);
+    } else {
+        puts("(cwd: unavailable)");
+    }
+    if (g_kspath[0] != '\0') {
+        printf("(kspath: %s)\n", g_kspath);
+    } else {
+        puts("(kspath: unset)");
+    }
+}
+
+static void ks_init_kspath(void) {
+    const char *env_path = getenv("KS2_KSPATH");
+    char cwd[PATH_MAX];
+    char candidate[PATH_MAX];
+    DIR *d;
+
+    g_kspath[0] = '\0';
+    if (env_path && env_path[0] != '\0') {
+        if (strlen(env_path) < sizeof(g_kspath)) {
+            strcpy(g_kspath, env_path);
+            return;
+        }
+    }
+
+    if (ks_getcwd(cwd, sizeof(cwd)) && ks_try_compose_path(candidate, sizeof(candidate), cwd, "ks") == 0) {
+        d = opendir(candidate);
+        if (d) {
+            closedir(d);
+            if (strlen(candidate) < sizeof(g_kspath)) {
+                strcpy(g_kspath, candidate);
+            }
+        }
+    }
 }
 
 static char* read_text_file(const char *path) {
@@ -563,6 +843,101 @@ static int host_set_pd(float amount) {
     return 0;
 }
 
+static int host_set_filter(float cutoff_hz, float resonance) {
+    if (cutoff_hz < 40.0f || cutoff_hz > 20000.0f) {
+        puts("(cutoff must be 40.0-20000.0 Hz)");
+        return -1;
+    }
+    if (resonance < 0.05f || resonance > 1.20f) {
+        puts("(resonance must be 0.05-1.20)");
+        return -1;
+    }
+    ksynth_engine_set_filter(cutoff_hz, resonance);
+    printf("filter set cutoff=%.1fHz res=%.3f\n", cutoff_hz, resonance);
+    return 0;
+}
+
+static int host_set_filter_cutoff(float cutoff_hz) {
+    if (cutoff_hz < 40.0f || cutoff_hz > 20000.0f) {
+        puts("(cutoff must be 40.0-20000.0 Hz)");
+        return -1;
+    }
+    ksynth_engine_set_filter_cutoff(cutoff_hz);
+    printf("filter cutoff=%.1fHz\n", cutoff_hz);
+    return 0;
+}
+
+static int host_set_filter_res(float resonance) {
+    if (resonance < 0.05f || resonance > 1.20f) {
+        puts("(resonance must be 0.05-1.20)");
+        return -1;
+    }
+    ksynth_engine_set_filter_resonance(resonance);
+    printf("filter resonance=%.3f\n", resonance);
+    return 0;
+}
+
+static int host_set_filter_keytrack(float keytrack) {
+    if (keytrack < 0.0f || keytrack > 1.5f) {
+        puts("(keytrack must be 0.0-1.5)");
+        return -1;
+    }
+    ksynth_engine_set_filter_keytrack(keytrack);
+    printf("filter keytrack=%.3f\n", keytrack);
+    return 0;
+}
+
+static int host_set_filter_mode(const char *mode) {
+    if (!mode) {
+        return -1;
+    }
+    if (strcmp(mode, "lp") == 0) {
+        ksynth_engine_set_filter_mode(0);
+        puts("filter mode=lp");
+        return 0;
+    }
+    if (strcmp(mode, "bp") == 0) {
+        ksynth_engine_set_filter_mode(1);
+        puts("filter mode=bp");
+        return 0;
+    }
+    if (strcmp(mode, "hp") == 0) {
+        ksynth_engine_set_filter_mode(2);
+        puts("filter mode=hp");
+        return 0;
+    }
+    puts("(filtermode must be lp, bp, or hp)");
+    return -1;
+}
+
+static int host_set_filter_drive(float drive) {
+    if (drive < 0.1f || drive > 12.0f) {
+        puts("(fdrive must be 0.1-12.0)");
+        return -1;
+    }
+    ksynth_engine_set_filter_drive(drive);
+    printf("filter drive=%.3f\n", drive);
+    return 0;
+}
+
+static int host_set_gain_db(float gain_db) {
+    float gain_linear;
+
+    if (gain_db < -96.0f || gain_db > 24.0f) {
+        puts("(gain db must be in range -96.0 to +24.0)");
+        return -1;
+    }
+
+    gain_linear = powf(10.0f, gain_db / 20.0f);
+    ksynth_engine_set_gain(gain_linear);
+    if (gain_db > 0.0f) {
+        printf("gain set db=%.2f (lin=%.4f, overdrive possible)\n", gain_db, gain_linear);
+    } else {
+        printf("gain set db=%.2f (lin=%.4f)\n", gain_db, gain_linear);
+    }
+    return 0;
+}
+
 static int host_set_detune(float cents_a, float cents_b) {
     if (cents_a < -100.0f || cents_a > 100.0f || cents_b < -100.0f || cents_b > 100.0f) {
         puts("(detune cents must be -100.0 to 100.0)");
@@ -644,6 +1019,20 @@ static int host_print_mod_state(void) {
     printf("  lfo: rate=%.3fHz depth=%.4f\n", s.lfo_rate_hz, s.lfo_depth);
     printf("  pd: amount=%.3f\n", s.pd_amount);
     printf("  detune: a=%.2fc b=%.2fc\n", s.detune_a_cents, s.detune_b_cents);
+    {
+        const char *mode = "lp";
+        if (s.filter_mode == 1) {
+            mode = "bp";
+        } else if (s.filter_mode == 2) {
+            mode = "hp";
+        }
+        printf("  filter: mode=%s cutoff=%.1fHz res=%.3f keytrack=%.3f drive=%.3f\n",
+               mode, s.filter_cutoff_hz, s.filter_resonance, s.filter_keytrack, s.filter_drive);
+    }
+    printf("  delay: time=%.1fms feedback=%.3f wet=%.3f\n",
+           s.delay_time_ms, s.delay_feedback, s.delay_wet);
+    printf("  ch0: pan=%.3f spread=%.3f panlfo=%.3f dsend=%.3f\n",
+           s.channel0_pan, s.channel0_pan_spread, s.channel0_pan_lfo_depth, s.channel0_delay_send);
     printf("  envdepth: pitch=%.3f pd=%.3f filter=%.1f\n",
            s.pitch_env_depth, s.pd_env_depth, s.filter_env_depth);
     printf("  envamp: a=%.1fms d=%.1fms s=%.3f r=%.1fms\n",
@@ -688,6 +1077,83 @@ static int host_set_channel_glide(int channel, float glide_ms) {
     return 0;
 }
 
+static int host_set_channel_pan(int channel, float pan) {
+    if (channel < 0 || channel >= 16) {
+        puts("(channel must be 0-F)");
+        return -1;
+    }
+    if (pan < -1.0f || pan > 1.0f) {
+        puts("(pan must be -1.0 to 1.0)");
+        return -1;
+    }
+    ksynth_engine_set_channel_pan(channel, pan);
+    printf("channel %X pan=%.3f\n", channel, pan);
+    return 0;
+}
+
+static int host_set_channel_pan_spread(int channel, float spread) {
+    if (channel < 0 || channel >= 16) {
+        puts("(channel must be 0-F)");
+        return -1;
+    }
+    if (spread < 0.0f || spread > 1.0f) {
+        puts("(panspread must be 0.0 to 1.0)");
+        return -1;
+    }
+    ksynth_engine_set_channel_pan_spread(channel, spread);
+    printf("channel %X panspread=%.3f\n", channel, spread);
+    return 0;
+}
+
+static int host_set_channel_pan_lfo(int channel, float depth) {
+    if (channel < 0 || channel >= 16) {
+        puts("(channel must be 0-F)");
+        return -1;
+    }
+    if (depth < 0.0f || depth > 1.0f) {
+        puts("(panlfo depth must be 0.0 to 1.0)");
+        return -1;
+    }
+    ksynth_engine_set_channel_pan_lfo_depth(channel, depth);
+    printf("channel %X panlfo=%.3f\n", channel, depth);
+    return 0;
+}
+
+static int host_set_channel_delay_send_db(int channel, float send_db) {
+    float send;
+
+    if (channel < 0 || channel >= 16) {
+        puts("(channel must be 0-F)");
+        return -1;
+    }
+    if (send_db < -96.0f || send_db > 0.0f) {
+        puts("(delay send db must be in range -96.0 to 0.0)");
+        return -1;
+    }
+    send = powf(10.0f, send_db / 20.0f);
+    ksynth_engine_set_channel_delay_send(channel, send);
+    printf("channel %X delay send db=%.2f (lin=%.3f)\n", channel, send_db, send);
+    return 0;
+}
+
+static int host_set_delay(float time_ms, float feedback, float wet) {
+    if (time_ms < 1.0f || time_ms > 4000.0f) {
+        puts("(delay time must be 1.0-4000.0 ms)");
+        return -1;
+    }
+    if (feedback < 0.0f || feedback > 0.98f) {
+        puts("(delay feedback must be 0.0-0.98)");
+        return -1;
+    }
+    if (wet < 0.0f || wet > 1.0f) {
+        puts("(delay wet must be 0.0-1.0)");
+        return -1;
+    }
+    ksynth_engine_set_delay(time_ms, feedback, wet);
+    printf("delay time=%.1fms feedback=%.3f wet=%.3f\n", time_ms, feedback, wet);
+    return 0;
+}
+
 static int host_note_on_ch(int channel, int note, int vel127) {
     float velocity;
 
@@ -720,6 +1186,47 @@ static int host_note_off_ch(int channel, int note) {
     }
     ksynth_engine_note_off_ch(channel, note);
     printf("noteoff ch=%X note=%d\n", channel, note);
+    return 0;
+}
+
+static int host_trig_wavetable(int channel, int note, int vel127) {
+    if (channel < 0 || channel >= 16) {
+        puts("(channel must be 0-F)");
+        return -1;
+    }
+    if (note < 0 || note > 127) {
+        puts("(note must be 0-127)");
+        return -1;
+    }
+    if (vel127 < 0 || vel127 > 127) {
+        puts("(vel127 must be 0-127)");
+        return -1;
+    }
+
+    ksynth_engine_note_on_ch(channel, note, (float)vel127 / 127.0f);
+    printf("trigwt ch=%X note=%d vel=%d\n", channel, note, vel127);
+    return 0;
+}
+
+static int host_channel_state(int channel) {
+    KSChannelStateSnapshot state;
+    const char *mode_text;
+
+    if (channel < 0 || channel >= 16) {
+        puts("(channel must be 0-F)");
+        return -1;
+    }
+
+    ksynth_engine_get_channel_state(channel, &state);
+    mode_text = (state.mode == KS_CHANNEL_MONO) ? "mono" : "poly";
+    printf("ch=%X mode=%s glide=%.1fms held=%d stack=%d top=%d active=%d\n",
+           channel,
+           mode_text,
+           state.glide_ms,
+           state.held_count,
+           state.stack_len,
+           state.top_note,
+           state.active_voice_count);
     return 0;
 }
 
@@ -774,6 +1281,8 @@ static int host_run_script(const char *path) {
     FILE *fp;
     char line[KS_REPL_MAX_LINE];
     int lineno = 0;
+    char resolved[PATH_MAX];
+    static const char *script_exts[] = { ".ks2.txt", ".txt", ".ks2", ".ks" };
 
     if (!path || path[0] == '\0') {
         puts("(script path missing)");
@@ -784,9 +1293,15 @@ static int host_run_script(const char *path) {
         return -1;
     }
 
-    fp = fopen(path, "rb");
+    if (ks_resolve_input_path(path, resolved, sizeof(resolved),
+                              script_exts, (int)(sizeof(script_exts) / sizeof(script_exts[0]))) != 0) {
+        ks_print_path_context("script file", path, "':script <name>.ks2.txt' or ':script ks/<name>.ks2.txt'");
+        return -1;
+    }
+
+    fp = fopen(resolved, "rb");
     if (!fp) {
-        puts("(could not read script file)");
+        ks_print_path_context("script file", path, "':script <name>.ks2.txt' or ':script ks/<name>.ks2.txt'");
         return -1;
     }
 
@@ -815,7 +1330,7 @@ static int host_run_script(const char *path) {
 
     fclose(fp);
     g_script_depth--;
-    printf("script %s done (%d lines)\n", path, lineno);
+    printf("script %s done (%d lines)\n", resolved, lineno);
     return 0;
 }
 
@@ -858,14 +1373,250 @@ static int host_sleep(const char *spec) {
     return 0;
 }
 
+static int ks_has_wildcards(const char *s) {
+    if (!s) {
+        return 0;
+    }
+    return strchr(s, '*') != NULL || strchr(s, '?') != NULL;
+}
+
+static int ks_names_append(char ***names, int *count, int *cap, const char *text) {
+    char *name;
+
+    if (!names || !count || !cap || !text) {
+        return -1;
+    }
+    if (*count >= *cap) {
+        int next_cap = *cap == 0 ? 32 : *cap * 2;
+        char **next_names = realloc(*names, (size_t)next_cap * sizeof(char *));
+        if (!next_names) {
+            return -1;
+        }
+        *names = next_names;
+        *cap = next_cap;
+    }
+    name = ks_strdup(text);
+    if (!name) {
+        return -1;
+    }
+    (*names)[(*count)++] = name;
+    return 0;
+}
+
+static void ks_names_free(char **names, int count) {
+    int i;
+    if (!names) {
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        free(names[i]);
+    }
+    free(names);
+}
+
+static void ks_print_names_columns(char **names, int count) {
+    int i;
+    int col_width = 0;
+    int cols;
+    int rows;
+    int width;
+
+    if (!names || count <= 0) {
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        int len = (int)strlen(names[i]);
+        if (len > col_width) {
+            col_width = len;
+        }
+    }
+
+    col_width += 2;
+    width = ks_terminal_width();
+    cols = width / col_width;
+    if (cols < 1) {
+        cols = 1;
+    }
+    rows = (count + cols - 1) / cols;
+
+    for (i = 0; i < rows; i++) {
+        int c;
+        for (c = 0; c < cols; c++) {
+            int idx = i + (c * rows);
+            if (idx >= count) {
+                continue;
+            }
+            if (c == cols - 1 || idx + rows >= count) {
+                printf("%s", names[idx]);
+            } else {
+                printf("%-*s", col_width, names[idx]);
+            }
+        }
+        putchar('\n');
+    }
+}
+
+static int host_ls(const char *path) {
+    DIR *dir;
+    struct dirent *ent;
+    const char *target = path;
+    char **names = NULL;
+    int count = 0;
+    int cap = 0;
+
+    if (!target || target[0] == '\0') {
+        target = ".";
+    }
+
+    if (ks_has_wildcards(target)) {
+#if defined(_WIN32)
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        h = FindFirstFileA(target, &fd);
+        if (h == INVALID_HANDLE_VALUE) {
+            puts("(no matches)");
+            return -1;
+        }
+        do {
+            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) {
+                continue;
+            }
+            if (ks_names_append(&names, &count, &cap, fd.cFileName) != 0) {
+                FindClose(h);
+                ks_names_free(names, count);
+                puts("(out of memory)");
+                return -1;
+            }
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+#else
+        glob_t g;
+        int grc;
+        size_t gi;
+
+        memset(&g, 0, sizeof(g));
+        grc = glob(target, GLOB_TILDE, NULL, &g);
+        if (grc != 0) {
+            globfree(&g);
+            puts("(no matches)");
+            return -1;
+        }
+        for (gi = 0; gi < g.gl_pathc; gi++) {
+            if (ks_names_append(&names, &count, &cap, g.gl_pathv[gi]) != 0) {
+                globfree(&g);
+                ks_names_free(names, count);
+                puts("(out of memory)");
+                return -1;
+            }
+        }
+        globfree(&g);
+#endif
+        if (count == 0) {
+            ks_names_free(names, count);
+            puts("(no matches)");
+            return -1;
+        }
+        ks_print_names_columns(names, count);
+        ks_names_free(names, count);
+        return 0;
+    }
+
+    dir = opendir(target);
+    if (!dir) {
+        puts("(could not open directory)");
+        return -1;
+    }
+
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        if (ks_names_append(&names, &count, &cap, ent->d_name) != 0) {
+            closedir(dir);
+            ks_names_free(names, count);
+            puts("(out of memory)");
+            return -1;
+        }
+    }
+    closedir(dir);
+
+    if (count == 0) {
+        ks_names_free(names, count);
+        return 0;
+    }
+
+    ks_print_names_columns(names, count);
+    ks_names_free(names, count);
+    return 0;
+}
+
+static int host_cd(const char *path) {
+    char cwd[PATH_MAX];
+
+    if (!path || path[0] == '\0') {
+        if (ks_getcwd(cwd, sizeof(cwd))) {
+            puts(cwd);
+            return 0;
+        }
+        puts("(could not read current directory)");
+        return -1;
+    }
+
+    if (ks_chdir(path) != 0) {
+        puts("(could not change directory)");
+        return -1;
+    }
+    if (ks_getcwd(cwd, sizeof(cwd))) {
+        puts(cwd);
+    }
+    return 0;
+}
+
+static int host_kspath(const char *path) {
+    DIR *d;
+
+    if (!path || path[0] == '\0') {
+        if (g_kspath[0] == '\0') {
+            puts("(kspath not set)");
+        } else {
+            printf("%s\n", g_kspath);
+        }
+        return 0;
+    }
+
+    d = opendir(path);
+    if (!d) {
+        puts("(kspath must be an existing directory)");
+        return -1;
+    }
+    closedir(d);
+
+    if (strlen(path) >= sizeof(g_kspath)) {
+        puts("(kspath too long)");
+        return -1;
+    }
+    strcpy(g_kspath, path);
+    printf("kspath=%s\n", g_kspath);
+    return 0;
+}
+
 static int host_load_patch(const char *path) {
     char *text;
     K* result;
     K* w;
+    char resolved[PATH_MAX];
+    static const char *patch_exts[] = { ".ks" };
 
-    text = read_text_file(path);
+    if (ks_resolve_input_path(path, resolved, sizeof(resolved),
+                              patch_exts, (int)(sizeof(patch_exts) / sizeof(patch_exts[0]))) != 0) {
+        ks_print_path_context("patch file", path, "':load <name>.ks' or ':load ks/<name>.ks'");
+        return -1;
+    }
+
+    text = read_text_file(resolved);
     if (!text) {
-        puts("(could not read file)");
+        ks_print_path_context("patch file", path, "':load <name>.ks' or ':load ks/<name>.ks'");
         return -1;
     }
 
@@ -879,7 +1630,7 @@ static int host_load_patch(const char *path) {
 
     w = get_var_value('W');
     if (w && w->n > 1 && w->n != -1) {
-        printf("loaded %s, W len=%d\n", path, w->n);
+        printf("loaded %s, W len=%d\n", resolved, w->n);
         k_free(w);
     } else {
         puts("(loaded, but W is missing or not a vector)");
@@ -905,6 +1656,7 @@ static int handle_repl_command(const char *line) {
     float v4;
     char word[32];
     char path[512];
+    const char *arg;
 
     if (strcmp(line, ":quit") == 0 || strcmp(line, ":q") == 0) {
         return -1;
@@ -941,8 +1693,20 @@ static int handle_repl_command(const char *line) {
     }
     if (sscanf(line, ":script %511s", path) == 1) {
         if (host_run_script(path) < 0) {
-            return -1;
+            return 1;
         }
+        return 1;
+    }
+    if (strcmp(line, ":kspath") == 0) {
+        host_kspath(NULL);
+        return 1;
+    }
+    if (strncmp(line, ":kspath ", 8) == 0) {
+        arg = line + 8;
+        while (*arg && isspace((unsigned char)*arg)) {
+            arg++;
+        }
+        host_kspath(arg);
         return 1;
     }
     if (sscanf(line, ":playwtraw %c", &var_name) == 1) {
@@ -989,6 +1753,34 @@ static int handle_repl_command(const char *line) {
         host_set_pd(v1);
         return 1;
     }
+    if (sscanf(line, ":filter %f %f", &v1, &v2) == 2) {
+        host_set_filter(v1, v2);
+        return 1;
+    }
+    if (sscanf(line, ":cutoff %f", &v1) == 1) {
+        host_set_filter_cutoff(v1);
+        return 1;
+    }
+    if (sscanf(line, ":res %f", &v1) == 1) {
+        host_set_filter_res(v1);
+        return 1;
+    }
+    if (sscanf(line, ":keytrack %f", &v1) == 1) {
+        host_set_filter_keytrack(v1);
+        return 1;
+    }
+    if (sscanf(line, ":filtermode %31s", word) == 1) {
+        host_set_filter_mode(word);
+        return 1;
+    }
+    if (sscanf(line, ":fdrive %f", &v1) == 1) {
+        host_set_filter_drive(v1);
+        return 1;
+    }
+    if (sscanf(line, ":gain %f", &v1) == 1) {
+        host_set_gain_db(v1);
+        return 1;
+    }
     if (sscanf(line, ":detune %f %f", &v1, &v2) == 2) {
         host_set_detune(v1, v2);
         return 1;
@@ -1017,6 +1809,26 @@ static int handle_repl_command(const char *line) {
         host_set_channel_glide(channel, v1);
         return 1;
     }
+    if (sscanf(line, ":pan %x %f", &channel, &v1) == 2) {
+        host_set_channel_pan(channel, v1);
+        return 1;
+    }
+    if (sscanf(line, ":panspread %x %f", &channel, &v1) == 2) {
+        host_set_channel_pan_spread(channel, v1);
+        return 1;
+    }
+    if (sscanf(line, ":panlfo %x %f", &channel, &v1) == 2) {
+        host_set_channel_pan_lfo(channel, v1);
+        return 1;
+    }
+    if (sscanf(line, ":chsenddelay %x %f", &channel, &v1) == 2) {
+        host_set_channel_delay_send_db(channel, v1);
+        return 1;
+    }
+    if (sscanf(line, ":delay %f %f %f", &v1, &v2, &v3) == 3) {
+        host_set_delay(v1, v2, v3);
+        return 1;
+    }
     if (sscanf(line, ":noteon %x %d %d", &channel, &note_i, &vel127) == 3) {
         host_note_on_ch(channel, note_i, vel127);
         return 1;
@@ -1025,8 +1837,40 @@ static int handle_repl_command(const char *line) {
         host_note_off_ch(channel, note_i);
         return 1;
     }
+    if (sscanf(line, ":trigwt %x %d %d", &channel, &note_i, &vel127) == 3) {
+        host_trig_wavetable(channel, note_i, vel127);
+        return 1;
+    }
+    if (sscanf(line, ":chstate %x", &channel) == 1) {
+        host_channel_state(channel);
+        return 1;
+    }
     if (sscanf(line, ":sleep %31s", word) == 1) {
         host_sleep(word);
+        return 1;
+    }
+    if (strcmp(line, ":ls") == 0) {
+        host_ls(NULL);
+        return 1;
+    }
+    if (strncmp(line, ":ls ", 4) == 0) {
+        arg = line + 4;
+        while (*arg && isspace((unsigned char)*arg)) {
+            arg++;
+        }
+        host_ls(arg);
+        return 1;
+    }
+    if (strcmp(line, ":cd") == 0) {
+        host_cd(NULL);
+        return 1;
+    }
+    if (strncmp(line, ":cd ", 4) == 0) {
+        arg = line + 4;
+        while (*arg && isspace((unsigned char)*arg)) {
+            arg++;
+        }
+        host_cd(arg);
         return 1;
     }
 
@@ -1039,6 +1883,7 @@ int main(void) {
     int i;
 
     signal(SIGINT, ks_handle_sigint);
+    ks_init_kspath();
     ks_history_init();
     if (audio_init(44100, 2, 256) != 0) {
         ks_history_shutdown();

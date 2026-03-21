@@ -1,0 +1,156 @@
+# KS2 Demo: DW8000-Vein Punch Bass (Octave Layer)
+# Usage:
+#   :script ks/demo-dw-bassline-octave.ks2.txt
+
+# Tables with different harmonic character.
+:load ks/dw8k-04.ks
+:wt 0 W
+:sleep 60ms
+
+:load ks/dw8k-12.ks
+:wt 1 W
+:sleep 60ms
+
+# Dual-table osc tone.
+:usewt 0 1
+:detune -3.8 3.8
+:pd 0.18
+:lfo 3.0 0.003
+
+# Punchy envelope profile.
+:envamp 2.5 95 0.46 85
+:envpd 4 70 0.14 95
+:envpitch 0.7 35 0.00 50
+:envdepth filter 1350
+:envdepth pd 0.26
+:envdepth pitch 0.035
+
+# Optional drive; reduce if too gritty.
+:gain 10
+
+# Poly for octave layering; minimal glide to keep a little motion.
+:chmode 0 poly
+:glide 0 12
+:modstate
+:sleep 180ms
+
+# Pattern helper:
+# each hit = root + octave (+12) with slightly lower octave velocity.
+
+# Bar 1
+:noteon 0 40 122
+:noteon 0 52 106
+:sleep 120ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 40 118
+:noteon 0 52 104
+:sleep 120ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 43 120
+:noteon 0 55 105
+:sleep 120ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 20ms
+
+:noteon 0 47 120
+:noteon 0 59 104
+:sleep 120ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 20ms
+
+# Bar 2
+:noteon 0 40 122
+:noteon 0 52 108
+:sleep 120ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 20ms
+
+:noteon 0 45 120
+:noteon 0 57 104
+:sleep 120ms
+:noteoff 0 57
+:noteoff 0 45
+:sleep 20ms
+
+:noteon 0 43 120
+:noteon 0 55 105
+:sleep 120ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 20ms
+
+:noteon 0 38 124
+:noteon 0 50 106
+:sleep 160ms
+:noteoff 0 50
+:noteoff 0 38
+:sleep 60ms
+
+# Bar 3 (slightly busier)
+:noteon 0 40 122
+:noteon 0 52 106
+:sleep 95ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 25ms
+
+:noteon 0 43 120
+:noteon 0 55 105
+:sleep 95ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 25ms
+
+:noteon 0 47 122
+:noteon 0 59 108
+:sleep 95ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 25ms
+
+:noteon 0 50 122
+:noteon 0 62 108
+:sleep 110ms
+:noteoff 0 62
+:noteoff 0 50
+:sleep 10ms
+
+:noteon 0 47 120
+:noteon 0 59 104
+:sleep 120ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 20ms
+
+# Bar 4 turnaround
+:noteon 0 35 126
+:noteon 0 47 110
+:sleep 170ms
+:noteoff 0 47
+:noteoff 0 35
+:sleep 70ms
+
+# Safety cleanup.
+:noteoff 0 35
+:noteoff 0 38
+:noteoff 0 40
+:noteoff 0 43
+:noteoff 0 45
+:noteoff 0 47
+:noteoff 0 50
+:noteoff 0 52
+:noteoff 0 55
+:noteoff 0 57
+:noteoff 0 59
+:noteoff 0 62
+
+:chstate 0

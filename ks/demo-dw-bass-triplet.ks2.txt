@@ -1,0 +1,42 @@
+# DW Triplet Roll
+:load ks/dw8k-01.ks
+:wt 0 W
+:load ks/dw8k-12.ks
+:wt 1 W
+:usewt 0 1
+:detune -3.0 3.0
+:pd 0.17
+:lfo 2.6 0.002
+:envamp 2.2 82 0.46 70
+:envpd 3 60 0.14 75
+:envpitch 0.6 22 0 38
+:envdepth filter 1300
+:envdepth pd 0.24
+:envdepth pitch 0.026
+:gain 8
+:chmode 0 mono
+:glide 0 80
+
+:noteon 0 40 122
+:sleep 85ms
+:noteoff 0 40
+:sleep 15ms
+:noteon 0 43 120
+:sleep 85ms
+:noteoff 0 43
+:sleep 15ms
+:noteon 0 47 122
+:sleep 85ms
+:noteoff 0 47
+:sleep 25ms
+:noteon 0 38 124
+:sleep 85ms
+:noteoff 0 38
+:sleep 15ms
+:noteon 0 40 122
+:sleep 85ms
+:noteoff 0 40
+:sleep 15ms
+:noteon 0 43 120
+:sleep 85ms
+:noteoff 0 43

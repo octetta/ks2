@@ -1,0 +1,47 @@
+# Tight DW Bass
+:load ks/dw8k-01.ks
+:wt 0 W
+:load ks/dw8k-13.ks
+:wt 1 W
+:usewt 0 1
+:detune -2.2 2.2
+:pd 0.11
+:lfo 2.4 0.001
+:envamp 1.8 70 0.44 65
+:envpd 2.5 60 0.12 70
+:envpitch 0.6 24 0.00 40
+:envdepth filter 1200
+:envdepth pd 0.20
+:envdepth pitch 0.020
+:gain 7
+:chmode 0 mono
+:glide 0 60
+
+:noteon 0 40 122
+:sleep 110ms
+:noteoff 0 40
+:sleep 20ms
+:noteon 0 43 118
+:sleep 110ms
+:noteoff 0 43
+:sleep 20ms
+:noteon 0 47 120
+:sleep 110ms
+:noteoff 0 47
+:sleep 20ms
+:noteon 0 38 124
+:sleep 150ms
+:noteoff 0 38
+:sleep 40ms
+
+:noteon 0 40 122
+:sleep 95ms
+:noteon 0 43 120
+:sleep 95ms
+:noteon 0 47 122
+:sleep 95ms
+:noteoff 0 47
+:sleep 20ms
+:noteon 0 35 126
+:sleep 160ms
+:noteoff 0 35

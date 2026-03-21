@@ -1,0 +1,72 @@
+# DW Octave Run (alt - bright/dirty)
+# A/B against demo-dw-bass-octave-run.ks2.txt
+
+:load ks/dw8k-01
+:wt 0 W
+:load ks/dw8k-02
+:wt 1 W
+
+:usewt 0 1
+:detune -3.2 3.2
+:pd 0.18
+:lfo 2.8 0.002
+
+:envamp 1.8 78 0.42 62
+:envpd 2.8 52 0.14 68
+:envpitch 0.5 20 -0.01 34
+:envdepth filter 1320
+:envdepth pd 0.28
+:envdepth pitch 0.028
+
+:gain 9
+:chmode 0 poly
+:glide 0 0
+
+:noteon 0 40 124
+:noteon 0 52 98
+:sleep 105ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 22ms
+
+:noteon 0 43 122
+:noteon 0 55 96
+:sleep 105ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 22ms
+
+:noteon 0 47 124
+:noteon 0 59 100
+:sleep 105ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 22ms
+
+:noteon 0 50 124
+:noteon 0 62 100
+:sleep 115ms
+:noteoff 0 62
+:noteoff 0 50
+:sleep 25ms
+
+:noteon 0 47 122
+:noteon 0 59 96
+:sleep 105ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 22ms
+
+:noteon 0 43 122
+:noteon 0 55 96
+:sleep 105ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 22ms
+
+:noteon 0 38 126
+:noteon 0 50 100
+:sleep 130ms
+:noteoff 0 50
+:noteoff 0 38
+:sleep 60ms

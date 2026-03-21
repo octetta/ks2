@@ -1,0 +1,79 @@
+# DW Octave Run (retuned)
+# Cleaner version: less rasp, tighter low-end, softer octave layer.
+
+:load ks/dw8k-01.ks
+:wt 0 W
+:load ks/dw8k-02.ks
+:wt 1 W
+
+:usewt 0 1
+:detune -2.2 2.2
+:pd 0.10
+:lfo 2.2 0.0015
+
+:envamp 2.2 82 0.44 70
+:envpd 3.0 56 0.12 72
+:envpitch 0.5 22 0.00 36
+:envdepth filter 1120
+:envdepth pd 0.18
+:envdepth pitch 0.020
+
+# Backed off from 9 dB; keeps body without harsh clipping.
+:gain 6
+
+:chmode 0 poly
+:glide 0 0
+:modstate
+:sleep 150ms
+
+# Root + octave layer (octave intentionally lower velocity).
+:noteon 0 40 120
+:noteon 0 52 92
+:sleep 120ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 30ms
+
+:noteon 0 43 118
+:noteon 0 55 90
+:sleep 120ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 30ms
+
+:noteon 0 47 120
+:noteon 0 59 92
+:sleep 120ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 30ms
+
+:noteon 0 50 120
+:noteon 0 62 92
+:sleep 130ms
+:noteoff 0 62
+:noteoff 0 50
+:sleep 40ms
+
+:noteon 0 47 118
+:noteon 0 59 90
+:sleep 120ms
+:noteoff 0 59
+:noteoff 0 47
+:sleep 30ms
+
+:noteon 0 43 118
+:noteon 0 55 90
+:sleep 120ms
+:noteoff 0 55
+:noteoff 0 43
+:sleep 30ms
+
+:noteon 0 40 122
+:noteon 0 52 92
+:sleep 140ms
+:noteoff 0 52
+:noteoff 0 40
+:sleep 120ms
+
+:chstate 0

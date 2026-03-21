@@ -1128,12 +1128,12 @@ void p(K* x) {
 
 K* ksynth_render_sample(void) {
     K* out = k_new(1);
-    float sample = 0.0f;
+    float sample_lr[2] = {0.0f, 0.0f};
 
     if (!out) {
         return NULL;
     }
-    ksynth_engine_render(&sample, 1);
-    out->f[0] = sample;
+    ksynth_engine_render_stereo(sample_lr, 1);
+    out->f[0] = 0.5f * (double)(sample_lr[0] + sample_lr[1]);
     return out;
 }

@@ -3,6 +3,8 @@
 #include "miniaudio.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static ma_device device;
 static float global_volume = 1.0f;
@@ -60,11 +62,32 @@ void audio_set_volume(float vol) { global_volume = vol; }
 float audio_get_volume(void) { return global_volume; }
 
 void audio_render(float *buffer, int frames, int channels) {
-    for (int i=0;i<frames*channels;i+=channels){
-        K* out = ksynth_render_sample();
-        float s = (out && out->n>0)? out->f[0]: 0.0f;
-        s *= global_volume;
-        for (int ch=0;ch<channels;ch++) buffer[i+ch] = s;
-        if (out) k_free(out);
+    int i;
+    float *tmp_lr;
+
+    if (!buffer || frames <= 0 || channels <= 0) {
+        return;
     }
+
+    tmp_lr = malloc((size_t)frames * 2u * sizeof(float));
+    if (!tmp_lr) {
+        memset(buffer, 0, (size_t)frames * (size_t)channels * sizeof(float));
+        return;
+    }
+
+    ksynth_engine_render_stereo(tmp_lr, frames);
+    for (i = 0; i < frames; i++) {
+        float l = tmp_lr[i * 2 + 0] * global_volume;
+        float r = tmp_lr[i * 2 + 1] * global_volume;
+        if (channels == 1) {
+            buffer[i] = 0.5f * (l + r);
+        } else {
+            buffer[i * channels + 0] = l;
+            buffer[i * channels + 1] = r;
+            for (int ch = 2; ch < channels; ch++) {
+                buffer[i * channels + ch] = 0.5f * (l + r);
+            }
+        }
+    }
+    free(tmp_lr);
 }

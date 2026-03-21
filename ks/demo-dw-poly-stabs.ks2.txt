@@ -1,0 +1,44 @@
+# DW Poly Stabs
+:load ks/dw8k-08.ks
+:wt 0 W
+:load ks/dw8k-10.ks
+:wt 1 W
+:usewt 0 1
+:detune -2.0 2.0
+:pd 0.12
+:lfo 4.5 0.004
+:envamp 2.0 120 0.32 120
+:envpd 4 90 0.10 100
+:envpitch 0.8 30 0 60
+:envdepth filter 1450
+:envdepth pd 0.18
+:envdepth pitch 0.020
+:gain 5
+:chmode 0 poly
+:glide 0 0
+
+:noteon 0 48 112
+:noteon 0 55 108
+:noteon 0 60 106
+:sleep 170ms
+:noteoff 0 60
+:noteoff 0 55
+:noteoff 0 48
+:sleep 120ms
+
+:noteon 0 46 112
+:noteon 0 53 108
+:noteon 0 58 106
+:sleep 170ms
+:noteoff 0 58
+:noteoff 0 53
+:noteoff 0 46
+:sleep 120ms
+
+:noteon 0 43 114
+:noteon 0 50 110
+:noteon 0 55 108
+:sleep 200ms
+:noteoff 0 55
+:noteoff 0 50
+:noteoff 0 43

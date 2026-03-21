@@ -42,8 +42,8 @@ Current REPL commands:
 - `:help`
 - `:version`
 - `:quit`
-- `:load <file.ks>`
-- `:script <file.txt>`
+- `:load <file[.ks]>` (`.ks` guessed when extension is omitted)
+- `:script <file>` (`.ks2.txt`, `.txt`, `.ks2`, `.ks` guessed when extension is omitted)
 - `:stop`
 - `:start`
 - `:playwt <var>`
@@ -56,6 +56,13 @@ Current REPL commands:
 - `:trigsample <hex> <note> <db>` (fractional MIDI notes supported, e.g. `60.5`; gain in dB)
 - `:lfo <rate_hz> <depth>`
 - `:pd <amount>`
+- `:filter <cutoff_hz> <res>`
+- `:cutoff <hz>`
+- `:res <value>`
+- `:keytrack <0..1.5>`
+- `:filtermode <lp|bp|hp>`
+- `:fdrive <0.1..12>`
+- `:gain <db>` (master synth gain in dB, `-96.0..+24.0`; values above `0 dB` intentionally allow overdrive/clipping)
 - `:detune <cents_a> <cents_b>`
 - `:envamp <a_ms> <d_ms> <s> <r_ms>`
 - `:envpd <a_ms> <d_ms> <s> <r_ms>`
@@ -64,9 +71,19 @@ Current REPL commands:
 - `:modstate`
 - `:chmode <hex> <mono|poly>`
 - `:glide <hex> <ms>`
+- `:pan <hex> <-1..1>`
+- `:panspread <hex> <0..1>`
+- `:panlfo <hex> <0..1>`
+- `:chsenddelay <hex> <db>`
+- `:delay <ms> <feedback> <wet>`
 - `:noteon <hex> <note> <vel127>`
 - `:noteoff <hex> <note>`
+- `:trigwt <hex> <note> <vel127>` (channel note-on convenience alias for wavetable voice triggering)
+- `:chstate <hex>` (prints channel mode/glide/held-note/active-voice snapshot)
 - `:sleep <seconds|ms>`
+- `:ls [path|pattern]` (directory listing plus simple wildcard patterns like `*.ks` or `ks/dw8k-0?.ks`)
+- `:cd [path]` (with no argument, prints current directory)
+- `:kspath [path]` (show/set KS asset base path for `:load`/`:script` fallback)
 - `:playwtraw <var>`
 - `:slots`
 
@@ -94,6 +111,8 @@ REPL script runner:
 - `:script <file>` executes REPL lines from a text file.
 - Blank lines and lines beginning with `#` are ignored.
 - Works with timing commands such as `:sleep 250ms`.
+- `:load`/`:script` now use `:kspath` fallback when direct relative paths do not resolve.
+- `KS2_KSPATH` environment variable can predefine `:kspath` at startup.
 
 Versioning:
 
@@ -149,6 +168,10 @@ This matters because:
   - `poly`: independent voice allocation per note
   - `mono`: one active voice per channel with note-stack priority and glide between held notes
 - `:glide` controls mono glissando time in milliseconds per channel.
+- `:chstate` exposes channel runtime state (mode, glide, held notes, stack top, active voices) for debugging/control-surface work.
+- Audio path now renders true stereo in the engine/audio callback (no longer mono-duped at output).
+- Per-channel spatial/FX controls now include pan center, per-voice pan spread, pan LFO depth, and delay send.
+- Global stereo delay is available with per-channel send routing.
 
 ## Recent Structural Decisions
 

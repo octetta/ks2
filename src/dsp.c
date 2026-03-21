@@ -17,6 +17,7 @@
 #define KS_MAX_SAMPLE_SLOTS 16
 #define KS_MAX_SAMPLE_VOICES 8
 #define KS_MAX_CHANNELS 16
+#define KS_DELAY_MAX_SECONDS 4
 #define KS_TWO_PI (2.0f * (float)M_PI)
 
 typedef enum {
@@ -27,6 +28,12 @@ typedef enum {
     KS_WAVE_TRIANGLE,
     KS_WAVE_TABLE
 } KSWaveform;
+
+typedef enum {
+    KS_FILTER_LP = 0,
+    KS_FILTER_BP = 1,
+    KS_FILTER_HP = 2
+} KSFilterMode;
 
 typedef struct {
     float data[KS_MAX_TABLE_LEN];
@@ -71,6 +78,7 @@ typedef struct {
     int channel;
     int held;
     int note;
+    int ch_idx;
     float base_freq;
     float target_freq;
     int glide_samples;
@@ -80,6 +88,7 @@ typedef struct {
     float mix[2];
     int table_slot[2];
     float width;
+    float pan_offset;
     float pd_amount;
     float filter_env_depth;
     float pitch_env_depth;
@@ -103,6 +112,10 @@ typedef struct {
 typedef struct {
     KSChannelMode mode;
     float glide_ms;
+    float pan;
+    float pan_spread;
+    float pan_lfo_depth;
+    float delay_send;
     unsigned char held[128];
     int stack[128];
     int stack_len;
@@ -124,6 +137,11 @@ typedef struct {
     int default_table_slot_a;
     int default_table_slot_b;
     float default_pd_amount;
+    float default_filter_cutoff_hz;
+    float default_filter_resonance;
+    float default_filter_keytrack;
+    float default_filter_drive;
+    KSFilterMode default_filter_mode;
     float default_filter_env_depth;
     float default_pitch_env_depth;
     float default_pd_env_depth;
@@ -140,6 +158,15 @@ typedef struct {
     EnvelopeSpec amp_spec;
     EnvelopeSpec pd_spec;
     EnvelopeSpec pitch_spec;
+    float *delay_buf_l;
+    float *delay_buf_r;
+    int delay_len;
+    int delay_write_pos;
+    int delay_samples;
+    float delay_time_ms;
+    float delay_feedback;
+    float delay_wet;
+    unsigned int voice_serial;
 } SynthEngine;
 
 static SynthEngine g_engine;
@@ -163,6 +190,17 @@ static float wrap_phase(float phase) {
         phase += 1.0f;
     }
     return phase;
+}
+
+static void pan_gains(float pan, float *gain_l, float *gain_r) {
+    float p = clampf(pan, -1.0f, 1.0f);
+    float angle = (p + 1.0f) * 0.25f * (float)M_PI;
+    if (gain_l) {
+        *gain_l = cosf(angle);
+    }
+    if (gain_r) {
+        *gain_r = sinf(angle);
+    }
 }
 
 static float midi_to_hz(int note) {
@@ -373,6 +411,33 @@ static float filter_process(FilterState *filter, float input, float cutoff_hz, f
     return clampf(filter->low, -1.5f, 1.5f);
 }
 
+static float filter_process_mode(FilterState *filter, float input, float cutoff_hz, float resonance, float sr, KSFilterMode mode) {
+    float f;
+    float q;
+    float high;
+
+    if (!filter) {
+        return input;
+    }
+
+    cutoff_hz = clampf(cutoff_hz, 40.0f, sr * 0.45f);
+    resonance = clampf(resonance, 0.05f, 1.2f);
+    f = 2.0f * sinf((float)M_PI * cutoff_hz / sr);
+    q = 2.0f - 1.9f * resonance;
+
+    filter->low += f * filter->band;
+    high = input - filter->low - q * filter->band;
+    filter->band += f * high;
+
+    if (mode == KS_FILTER_HP) {
+        return clampf(high, -1.5f, 1.5f);
+    }
+    if (mode == KS_FILTER_BP) {
+        return clampf(filter->band, -1.5f, 1.5f);
+    }
+    return clampf(filter->low, -1.5f, 1.5f);
+}
+
 static Voice* allocate_voice(void) {
     int i;
     int quietest = 0;
@@ -424,6 +489,11 @@ static Voice* find_voice_for_channel_note(int channel, int note) {
 }
 
 static void start_voice(Voice *voice, int channel, int note, float hz, float velocity) {
+    ChannelState *ch;
+    float spread;
+    float rnd;
+    int ch_idx;
+
     if (!voice) {
         return;
     }
@@ -444,9 +514,20 @@ static void start_voice(Voice *voice, int channel, int note, float hz, float vel
     voice->mix[0] = 0.55f;
     voice->mix[1] = 0.45f;
     voice->width = 0.32f;
+    ch_idx = channel;
+    if (ch_idx < 0) {
+        ch_idx = 0;
+    } else if (ch_idx >= KS_MAX_CHANNELS) {
+        ch_idx = KS_MAX_CHANNELS - 1;
+    }
+    ch = &g_engine.channels[ch_idx];
+    spread = clampf(ch->pan_spread, 0.0f, 1.0f);
+    g_engine.voice_serial = g_engine.voice_serial * 1664525u + 1013904223u + (unsigned int)(note + channel * 17);
+    rnd = (float)((g_engine.voice_serial >> 8) & 0x00FFFFFFu) / 16777215.0f;
+    voice->pan_offset = (rnd * 2.0f - 1.0f) * spread;
     voice->pd_amount = g_engine.default_pd_amount;
-    voice->filter.cutoff = 1400.0f;
-    voice->filter.resonance = 0.42f;
+    voice->filter.cutoff = g_engine.default_filter_cutoff_hz;
+    voice->filter.resonance = g_engine.default_filter_resonance;
     voice->filter_env_depth = g_engine.default_filter_env_depth;
     voice->pitch_env_depth = g_engine.default_pitch_env_depth;
     voice->pd_env_depth = g_engine.default_pd_env_depth;
@@ -531,7 +612,7 @@ static void advance_step_sequencer(float dt) {
     }
 }
 
-static float render_voice(Voice *voice, float dt, float lfo_value) {
+static void render_voice(Voice *voice, float dt, float lfo_value, float *out_l, float *out_r, float *send_l, float *send_r) {
     float amp;
     float pd_env;
     float pitch_env;
@@ -541,9 +622,20 @@ static float render_voice(Voice *voice, float dt, float lfo_value) {
     float osc1;
     float sample;
     float cutoff;
+    float drive;
+    float keyscale;
+    int note;
+    int ch_idx;
+    float gl;
+    float gr;
+    float pan;
+    float pan_lfo;
+    float s;
+    float send;
+    ChannelState *ch;
 
     if (!voice || !voice->active) {
-        return 0.0f;
+        return;
     }
 
     amp = envelope_step(&voice->amp_env, dt);
@@ -552,7 +644,7 @@ static float render_voice(Voice *voice, float dt, float lfo_value) {
 
     if (voice->amp_env.finished) {
         voice->active = 0;
-        return 0.0f;
+        return;
     }
 
     if (voice->glide_samples > 0) {
@@ -572,10 +664,48 @@ static float render_voice(Voice *voice, float dt, float lfo_value) {
     osc1 = render_waveform(voice->wave_b, voice->table_slot[1], apply_phase_distortion(voice->phase[1], -pd_amount * 0.7f), voice->width);
     sample = osc0 * voice->mix[0] + osc1 * voice->mix[1];
 
-    cutoff = voice->filter.cutoff + pd_env * voice->filter_env_depth + lfo_value * 180.0f;
-    sample = filter_process(&voice->filter, sample, cutoff, voice->filter.resonance, (float)g_engine.sample_rate);
+    note = voice->note;
+    if (note < 0) {
+        note = 0;
+    } else if (note > 127) {
+        note = 127;
+    }
+    keyscale = powf(2.0f, ((float)(note - 60) / 12.0f) * g_engine.default_filter_keytrack);
+    cutoff = (voice->filter.cutoff + pd_env * voice->filter_env_depth + lfo_value * 180.0f) * keyscale;
 
-    return sample * amp * voice->velocity;
+    drive = g_engine.default_filter_drive;
+    if (drive > 1.0001f) {
+        sample = tanhf(sample * drive) / tanhf(drive);
+    }
+    sample = filter_process_mode(&voice->filter, sample, cutoff, voice->filter.resonance,
+                                 (float)g_engine.sample_rate, g_engine.default_filter_mode);
+
+    s = sample * amp * voice->velocity;
+    ch_idx = voice->channel;
+    if (ch_idx < 0) {
+        ch_idx = 0;
+    } else if (ch_idx >= KS_MAX_CHANNELS) {
+        ch_idx = KS_MAX_CHANNELS - 1;
+    }
+    ch = &g_engine.channels[ch_idx];
+    pan_lfo = ch->pan_lfo_depth * lfo_value;
+    pan = clampf(ch->pan + voice->pan_offset + pan_lfo, -1.0f, 1.0f);
+    pan_gains(pan, &gl, &gr);
+
+    if (out_l) {
+        *out_l += s * gl;
+    }
+    if (out_r) {
+        *out_r += s * gr;
+    }
+
+    send = clampf(ch->delay_send, 0.0f, 1.0f);
+    if (send_l) {
+        *send_l += s * gl * send;
+    }
+    if (send_r) {
+        *send_r += s * gr * send;
+    }
 }
 
 static SampleVoice* allocate_sample_voice(void) {
@@ -650,7 +780,15 @@ static void load_default_patch(void) {
     g_engine.default_table_slot_a = 0;
     g_engine.default_table_slot_b = 1;
     g_engine.default_pd_amount = 0.35f;
+    g_engine.default_filter_cutoff_hz = 1400.0f;
+    g_engine.default_filter_resonance = 0.42f;
+    g_engine.default_filter_keytrack = 0.0f;
+    g_engine.default_filter_drive = 1.0f;
+    g_engine.default_filter_mode = KS_FILTER_LP;
     g_engine.default_filter_env_depth = 1800.0f;
+    g_engine.delay_time_ms = 320.0f;
+    g_engine.delay_feedback = 0.35f;
+    g_engine.delay_wet = 0.20f;
     g_engine.default_pitch_env_depth = 0.08f;
     g_engine.default_pd_env_depth = 0.60f;
     store_adsr(g_engine.amp_adsr, 10.0f, 60.0f, 0.72f, 300.0f);
@@ -727,6 +865,10 @@ static void load_default_patch(void) {
     for (ch = 0; ch < KS_MAX_CHANNELS; ch++) {
         g_engine.channels[ch].mode = KS_CHANNEL_POLY;
         g_engine.channels[ch].glide_ms = 0.0f;
+        g_engine.channels[ch].pan = 0.0f;
+        g_engine.channels[ch].pan_spread = 0.0f;
+        g_engine.channels[ch].pan_lfo_depth = 0.0f;
+        g_engine.channels[ch].delay_send = 0.0f;
         g_engine.channels[ch].stack_len = 0;
         memset(g_engine.channels[ch].held, 0, sizeof(g_engine.channels[ch].held));
     }
@@ -739,19 +881,45 @@ static void load_default_patch(void) {
 }
 
 void ksynth_engine_init(int sample_rate) {
+    float *old_delay_l = g_engine.delay_buf_l;
+    float *old_delay_r = g_engine.delay_buf_r;
+    int delay_len;
+    int delay_samples;
+
+    if (old_delay_l) {
+        free(old_delay_l);
+    }
+    if (old_delay_r) {
+        free(old_delay_r);
+    }
     load_default_patch();
     if (sample_rate > 0) {
         g_engine.sample_rate = sample_rate;
     }
+    delay_len = g_engine.sample_rate * KS_DELAY_MAX_SECONDS;
+    if (delay_len < 1) {
+        delay_len = 1;
+    }
+    g_engine.delay_buf_l = calloc((size_t)delay_len, sizeof(float));
+    g_engine.delay_buf_r = calloc((size_t)delay_len, sizeof(float));
+    g_engine.delay_len = delay_len;
+    g_engine.delay_write_pos = 0;
+    delay_samples = (int)((g_engine.delay_time_ms / 1000.0f) * (float)g_engine.sample_rate);
+    if (delay_samples < 1) {
+        delay_samples = 1;
+    } else if (delay_samples >= g_engine.delay_len) {
+        delay_samples = g_engine.delay_len - 1;
+    }
+    g_engine.delay_samples = delay_samples;
     g_engine_ready = 1;
 }
 
-void ksynth_engine_render(float *out, int frames) {
+void ksynth_engine_render_stereo(float *out_lr, int frames) {
     int i;
     int v;
     float dt;
 
-    if (!out || frames <= 0) {
+    if (!out_lr || frames <= 0) {
         return;
     }
 
@@ -759,11 +927,16 @@ void ksynth_engine_render(float *out, int frames) {
         ksynth_engine_init(44100);
     }
 
-    memset(out, 0, (size_t)frames * sizeof(float));
+    memset(out_lr, 0, (size_t)frames * 2u * sizeof(float));
     dt = 1.0f / (float)g_engine.sample_rate;
 
     for (i = 0; i < frames; i++) {
-        float mix = 0.0f;
+        float dry_l = 0.0f;
+        float dry_r = 0.0f;
+        float send_l = 0.0f;
+        float send_r = 0.0f;
+        float wet_l = 0.0f;
+        float wet_r = 0.0f;
         float lfo_value;
 
         if (g_engine.transport_running) {
@@ -773,14 +946,56 @@ void ksynth_engine_render(float *out, int frames) {
         lfo_value = sinf(g_engine.lfo_phase * KS_TWO_PI);
 
         for (v = 0; v < KS_MAX_VOICES; v++) {
-            mix += render_voice(&g_engine.voices[v], dt, lfo_value);
+            render_voice(&g_engine.voices[v], dt, lfo_value, &dry_l, &dry_r, &send_l, &send_r);
         }
         for (v = 0; v < KS_MAX_SAMPLE_VOICES; v++) {
-            mix += render_sample_voice(&g_engine.sample_voices[v]);
+            float s = render_sample_voice(&g_engine.sample_voices[v]);
+            dry_l += s;
+            dry_r += s;
+            send_l += s * g_engine.channels[0].delay_send;
+            send_r += s * g_engine.channels[0].delay_send;
         }
 
-        out[i] = clampf(mix * g_engine.master_gain, -0.95f, 0.95f);
+        if (g_engine.delay_buf_l && g_engine.delay_buf_r && g_engine.delay_len > 0) {
+            int read_pos = g_engine.delay_write_pos - g_engine.delay_samples;
+            if (read_pos < 0) {
+                read_pos += g_engine.delay_len;
+            }
+            wet_l = g_engine.delay_buf_l[read_pos];
+            wet_r = g_engine.delay_buf_r[read_pos];
+            g_engine.delay_buf_l[g_engine.delay_write_pos] = send_l + wet_l * g_engine.delay_feedback;
+            g_engine.delay_buf_r[g_engine.delay_write_pos] = send_r + wet_r * g_engine.delay_feedback;
+            g_engine.delay_write_pos++;
+            if (g_engine.delay_write_pos >= g_engine.delay_len) {
+                g_engine.delay_write_pos = 0;
+            }
+        }
+
+        dry_l += wet_l * g_engine.delay_wet;
+        dry_r += wet_r * g_engine.delay_wet;
+        out_lr[i * 2 + 0] = clampf(dry_l * g_engine.master_gain, -0.95f, 0.95f);
+        out_lr[i * 2 + 1] = clampf(dry_r * g_engine.master_gain, -0.95f, 0.95f);
     }
+}
+
+void ksynth_engine_render(float *out, int frames) {
+    int i;
+    float *tmp;
+
+    if (!out || frames <= 0) {
+        return;
+    }
+
+    tmp = malloc((size_t)frames * 2u * sizeof(float));
+    if (!tmp) {
+        memset(out, 0, (size_t)frames * sizeof(float));
+        return;
+    }
+    ksynth_engine_render_stereo(tmp, frames);
+    for (i = 0; i < frames; i++) {
+        out[i] = 0.5f * (tmp[i * 2 + 0] + tmp[i * 2 + 1]);
+    }
+    free(tmp);
 }
 
 void ksynth_engine_set_bpm(float bpm) {
@@ -794,7 +1009,7 @@ void ksynth_engine_set_gain(float gain) {
     if (!g_engine_ready) {
         ksynth_engine_init(44100);
     }
-    g_engine.master_gain = clampf(gain, 0.0f, 1.0f);
+    g_engine.master_gain = clampf(gain, 0.0f, 16.0f);
 }
 
 void ksynth_engine_set_step(int index, int semitone) {
@@ -883,6 +1098,63 @@ void ksynth_engine_set_pd(float amount) {
     }
 }
 
+void ksynth_engine_set_filter(float cutoff_hz, float resonance) {
+    int i;
+    float c;
+    float r;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+
+    c = clampf(cutoff_hz, 40.0f, (float)g_engine.sample_rate * 0.45f);
+    r = clampf(resonance, 0.05f, 1.2f);
+    g_engine.default_filter_cutoff_hz = c;
+    g_engine.default_filter_resonance = r;
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        g_engine.voices[i].filter.cutoff = c;
+        g_engine.voices[i].filter.resonance = r;
+    }
+}
+
+void ksynth_engine_set_filter_cutoff(float cutoff_hz) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    ksynth_engine_set_filter(cutoff_hz, g_engine.default_filter_resonance);
+}
+
+void ksynth_engine_set_filter_resonance(float resonance) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    ksynth_engine_set_filter(g_engine.default_filter_cutoff_hz, resonance);
+}
+
+void ksynth_engine_set_filter_keytrack(float keytrack) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.default_filter_keytrack = clampf(keytrack, 0.0f, 1.5f);
+}
+
+void ksynth_engine_set_filter_mode(int mode) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    if (mode < 0 || mode > 2) {
+        mode = 0;
+    }
+    g_engine.default_filter_mode = (KSFilterMode)mode;
+}
+
+void ksynth_engine_set_filter_drive(float drive) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.default_filter_drive = clampf(drive, 0.1f, 12.0f);
+}
+
 void ksynth_engine_set_filter_env_depth(float amount) {
     int i;
     float v;
@@ -962,6 +1234,18 @@ void ksynth_engine_get_mod_state(KSEngineModState *out_state) {
     out_state->pd_amount = g_engine.default_pd_amount;
     out_state->detune_a_cents = ratio_to_cents(g_engine.default_detune[0]);
     out_state->detune_b_cents = ratio_to_cents(g_engine.default_detune[1]);
+    out_state->filter_cutoff_hz = g_engine.default_filter_cutoff_hz;
+    out_state->filter_resonance = g_engine.default_filter_resonance;
+    out_state->filter_keytrack = g_engine.default_filter_keytrack;
+    out_state->filter_drive = g_engine.default_filter_drive;
+    out_state->filter_mode = (int)g_engine.default_filter_mode;
+    out_state->delay_time_ms = g_engine.delay_time_ms;
+    out_state->delay_feedback = g_engine.delay_feedback;
+    out_state->delay_wet = g_engine.delay_wet;
+    out_state->channel0_pan = g_engine.channels[0].pan;
+    out_state->channel0_pan_spread = g_engine.channels[0].pan_spread;
+    out_state->channel0_pan_lfo_depth = g_engine.channels[0].pan_lfo_depth;
+    out_state->channel0_delay_send = g_engine.channels[0].delay_send;
     out_state->filter_env_depth = g_engine.default_filter_env_depth;
     out_state->pitch_env_depth = g_engine.default_pitch_env_depth;
     out_state->pd_env_depth = g_engine.default_pd_env_depth;
@@ -1017,6 +1301,38 @@ static int normalize_channel(int channel) {
     return channel;
 }
 
+void ksynth_engine_get_channel_state(int channel, KSChannelStateSnapshot *out_state) {
+    ChannelState *ch;
+    int i;
+
+    if (!out_state) {
+        return;
+    }
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+
+    channel = normalize_channel(channel);
+    ch = &g_engine.channels[channel];
+    out_state->mode = ch->mode;
+    out_state->glide_ms = ch->glide_ms;
+    out_state->held_count = 0;
+    out_state->stack_len = ch->stack_len;
+    out_state->top_note = ch->stack_len > 0 ? ch->stack[ch->stack_len - 1] : -1;
+    out_state->active_voice_count = 0;
+
+    for (i = 0; i < 128; i++) {
+        if (ch->held[i]) {
+            out_state->held_count++;
+        }
+    }
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        if (g_engine.voices[i].active && g_engine.voices[i].channel == channel) {
+            out_state->active_voice_count++;
+        }
+    }
+}
+
 void ksynth_engine_set_channel_mode(int channel, KSChannelMode mode) {
     channel = normalize_channel(channel);
     if (!g_engine_ready) {
@@ -1031,6 +1347,60 @@ void ksynth_engine_set_channel_glide_ms(int channel, float glide_ms) {
         ksynth_engine_init(44100);
     }
     g_engine.channels[channel].glide_ms = clampf(glide_ms, 0.0f, 5000.0f);
+}
+
+void ksynth_engine_set_channel_pan(int channel, float pan) {
+    channel = normalize_channel(channel);
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.channels[channel].pan = clampf(pan, -1.0f, 1.0f);
+}
+
+void ksynth_engine_set_channel_pan_spread(int channel, float spread) {
+    channel = normalize_channel(channel);
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.channels[channel].pan_spread = clampf(spread, 0.0f, 1.0f);
+}
+
+void ksynth_engine_set_channel_pan_lfo_depth(int channel, float depth) {
+    channel = normalize_channel(channel);
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.channels[channel].pan_lfo_depth = clampf(depth, 0.0f, 1.0f);
+}
+
+void ksynth_engine_set_channel_delay_send(int channel, float send) {
+    channel = normalize_channel(channel);
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.channels[channel].delay_send = clampf(send, 0.0f, 1.0f);
+}
+
+void ksynth_engine_set_delay(float time_ms, float feedback, float wet) {
+    int delay_samples;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    if (g_engine.delay_len < 2) {
+        return;
+    }
+    g_engine.delay_time_ms = clampf(time_ms, 1.0f, (float)(KS_DELAY_MAX_SECONDS * 1000));
+    g_engine.delay_feedback = clampf(feedback, 0.0f, 0.98f);
+    g_engine.delay_wet = clampf(wet, 0.0f, 1.0f);
+
+    delay_samples = (int)((g_engine.delay_time_ms / 1000.0f) * (float)g_engine.sample_rate);
+    if (delay_samples < 1) {
+        delay_samples = 1;
+    } else if (delay_samples >= g_engine.delay_len) {
+        delay_samples = g_engine.delay_len - 1;
+    }
+    g_engine.delay_samples = delay_samples;
 }
 
 void ksynth_engine_note_on_ch(int channel, int note, float velocity) {

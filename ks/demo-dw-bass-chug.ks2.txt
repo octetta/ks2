@@ -1,0 +1,38 @@
+# DW Chug Pattern
+:load ks/dw8k-01.ks
+:wt 0 W
+:load ks/dw8k-14.ks
+:wt 1 W
+:usewt 0 1
+:detune -1.6 1.6
+:pd 0.10
+:lfo 2.0 0.001
+:envamp 1.5 48 0.30 45
+:envpd 2 42 0.09 50
+:envpitch 0.4 16 0 28
+:envdepth filter 1700
+:envdepth pd 0.22
+:envdepth pitch 0.018
+:gain 9
+:chmode 0 mono
+:glide 0 35
+
+:noteon 0 40 124
+:sleep 70ms
+:noteoff 0 40
+:sleep 25ms
+:noteon 0 40 118
+:sleep 70ms
+:noteoff 0 40
+:sleep 25ms
+:noteon 0 40 124
+:sleep 70ms
+:noteoff 0 40
+:sleep 25ms
+:noteon 0 43 122
+:sleep 90ms
+:noteoff 0 43
+:sleep 20ms
+:noteon 0 38 126
+:sleep 120ms
+:noteoff 0 38

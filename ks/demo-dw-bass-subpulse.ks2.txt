@@ -1,0 +1,34 @@
+# DW Sub Pulse Bass
+:load ks/dw8k-16.ks
+:wt 0 W
+:load ks/dw8k-01.ks
+:wt 1 W
+:usewt 0 1
+:detune -1.0 1.0
+:pd 0.08
+:lfo 1.7 0.001
+:envamp 3.0 95 0.52 95
+:envpd 4.0 75 0.12 90
+:envpitch 0.5 20 0 40
+:envdepth filter 950
+:envdepth pd 0.16
+:envdepth pitch 0.015
+:gain 6
+:chmode 0 mono
+:glide 0 55
+
+:noteon 0 35 124
+:sleep 150ms
+:noteoff 0 35
+:sleep 20ms
+:noteon 0 38 122
+:sleep 150ms
+:noteoff 0 38
+:sleep 20ms
+:noteon 0 40 122
+:sleep 150ms
+:noteoff 0 40
+:sleep 20ms
+:noteon 0 31 126
+:sleep 170ms
+:noteoff 0 31

@@ -1,0 +1,40 @@
+# Aggressive DW Bass
+:load ks/dw8k-01.ks
+:wt 0 W
+:load ks/dw8k-02.ks
+:wt 1 W
+:usewt 0 1
+:detune -4.2 4.2
+:pd 0.24
+:lfo 3.2 0.003
+:envamp 1.2 62 0.40 55
+:envpd 2 52 0.10 70
+:envpitch 0.4 18 -0.02 35
+:envdepth filter 1550
+:envdepth pd 0.35
+:envdepth pitch 0.045
+:gain 11
+:chmode 0 mono
+:glide 0 75
+
+:noteon 0 40 126
+:sleep 90ms
+:noteoff 0 40
+:sleep 18ms
+:noteon 0 52 114
+:sleep 25ms
+:noteoff 0 52
+:noteon 0 43 124
+:sleep 95ms
+:noteoff 0 43
+:sleep 18ms
+:noteon 0 55 112
+:sleep 28ms
+:noteoff 0 55
+:noteon 0 47 124
+:sleep 110ms
+:noteoff 0 47
+:sleep 20ms
+:noteon 0 38 127
+:sleep 150ms
+:noteoff 0 38
