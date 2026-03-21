@@ -22,3 +22,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local REPL history fallback
+.ks2

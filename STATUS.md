@@ -1,12 +1,18 @@
 # KSynth Status
 
+## Document Roles
+
+- `STATUS.md`: current-state snapshot of behavior, commands, and near-term direction.
+- `CHANGELOG.md`: chronological history of changes over time.
+- `MIGRATION.md`: machine-transfer and environment recovery workflow.
+
 ## Project Shape
 
 KSynth is currently a native C build with three active layers:
 
 - A restored KSynth DSL in [src/ksynth.c](/home/stewartj/book/ks2/src/ksynth.c), based on the older root-level `ksynth.c` semantics rather than the earlier temporary command-language work.
 - A real-time DSP engine in [src/dsp.c](/home/stewartj/book/ks2/src/dsp.c) that still contains the richer synth experiments: polyphonic voices, 8-stage envelopes, phase distortion, filter, LFO, sequencer, wavetable support.
-- A native REPL shell in [src/main.c](/home/stewartj/book/ks2/src/main.c) using [include/uedit.h](/home/stewartj/book/ks2/include/uedit.h), with miniaudio playback via [src/audio.c](/home/stewartj/book/ks2/src/audio.c).
+- A native REPL shell in [src/main.c](/home/stewartj/book/ks2/src/main.c) using `bestline` on Linux/macOS and [include/uedit.h](/home/stewartj/book/ks2/include/uedit.h) on Windows, with miniaudio playback via [src/audio.c](/home/stewartj/book/ks2/src/audio.c).
 
 The current direction is:
 
@@ -34,17 +40,66 @@ make
 Current REPL commands:
 
 - `:help`
+- `:version`
 - `:quit`
 - `:load <file.ks>`
+- `:script <file.txt>`
 - `:stop`
 - `:start`
 - `:playwt <var>`
 - `:playsample <var>`
 - `:play <var>` as legacy alias for sample playback
 - `:wt <0-3> <var>`
+- `:usewt <0-3> <0-3>`
 - `:sample <hex> <var>`
 - `:slot <hex> <var>` as legacy alias for sample banking
+- `:trigsample <hex> <note> <db>` (fractional MIDI notes supported, e.g. `60.5`; gain in dB)
+- `:lfo <rate_hz> <depth>`
+- `:pd <amount>`
+- `:detune <cents_a> <cents_b>`
+- `:envamp <a_ms> <d_ms> <s> <r_ms>`
+- `:envpd <a_ms> <d_ms> <s> <r_ms>`
+- `:envpitch <a_ms> <d_ms> <s> <r_ms>`
+- `:envdepth <pitch|pd|filter> <amount>`
+- `:modstate`
+- `:chmode <hex> <mono|poly>`
+- `:glide <hex> <ms>`
+- `:noteon <hex> <note> <vel127>`
+- `:noteoff <hex> <note>`
+- `:sleep <seconds|ms>`
+- `:playwtraw <var>`
 - `:slots`
+
+REPL history persistence:
+
+- Linux/macOS: uses `bestline` history loaded/saved from `~/.ks2`.
+- Windows: appends entered lines to `%USERPROFILE%\\.ks2` (or `%HOMEDRIVE%%HOMEPATH%\\.ks2`) and restores last command for `uedit` Up-arrow recall.
+
+REPL interrupt behavior:
+
+- `Ctrl-C` once: does not exit; prints a warning and silences active synth voices.
+- `Ctrl-C` twice in a row: exits the REPL and runs normal cleanup.
+
+Startup behavior:
+
+- Sequencer transport now starts stopped by default (no need to run `:stop` after launch unless you started transport manually).
+
+REPL script runner:
+
+- `:script <file>` executes REPL lines from a text file.
+- Blank lines and lines beginning with `#` are ignored.
+- Works with timing commands such as `:sleep 250ms`.
+
+Versioning:
+
+- Project version is sourced from `VERSION` (Semantic Versioning format).
+- Binary reports version in the REPL banner and via `:version`.
+- Build helpers:
+  - `make version`
+  - `make check-version`
+- CI/Release automation:
+  - `.github/workflows/ci.yml` for push/PR validation.
+  - `.github/workflows/release.yml` for `v*` tag releases (tag must match `VERSION`).
 
 ### Patch compatibility
 
@@ -76,6 +131,20 @@ This matters because:
 - `dw8k-*` patches generate loopable wavetable content
 - `dm-bell` / `mod-crush-rez` generate one-shot sample content
 
+### Wavetable audition control
+
+- `:playwt` uses the full synth voice path (LFO, detune, envelopes, filter, PD can all color the result).
+- `:playwtraw` minimizes those modulation/depth settings for cleaner wavetable audition.
+- The new modulation/envelope commands can be used to dial behavior between raw and fully-shaped playback.
+
+### Performance Layer (Pre-MIDI)
+
+- The engine now has channel-oriented event APIs (`note_on_ch`, `note_off_ch`) with per-channel mode and glide.
+- Per-channel mode supports:
+  - `poly`: independent voice allocation per note
+  - `mono`: one active voice per channel with note-stack priority and glide between held notes
+- `:glide` controls mono glissando time in milliseconds per channel.
+
 ## Recent Structural Decisions
 
 ### 1. Do not treat the old root `ksynth.c` as production code verbatim
@@ -103,14 +172,17 @@ The engine code in [src/dsp.c](/home/stewartj/book/ks2/src/dsp.c) is intentional
 - [src/main.c](/home/stewartj/book/ks2/src/main.c): REPL, host commands, banking
 - [src/audio.c](/home/stewartj/book/ks2/src/audio.c): audio callback wrapper
 - [src/miniaudio.c](/home/stewartj/book/ks2/src/miniaudio.c): separate miniaudio implementation unit for faster rebuilds
-- [include/uedit.h](/home/stewartj/book/ks2/include/uedit.h): line editing
+- [vendor/miniaudio/miniaudio.h](/home/stewartj/book/ks2/vendor/miniaudio/miniaudio.h): vendored miniaudio header
+- [vendor/bestline/](/home/stewartj/book/ks2/vendor/bestline): line editor used on Linux/macOS
+- [include/uedit.h](/home/stewartj/book/ks2/include/uedit.h): line editor fallback used on Windows
 - [ks/]( /home/stewartj/book/ks2/ks ): patch examples and compatibility targets
 - [readme.md](/home/stewartj/book/ks2/readme.md), [guide.md](/home/stewartj/book/ks2/guide.md), [reference.md](/home/stewartj/book/ks2/reference.md): intent/reference docs
 
 ## Known Limitations
 
 - `:playsample` is a lightweight sample audition path, not a finished sampler architecture.
-- There is not yet a proper command to trigger a banked sample slot at arbitrary note/pitch from the shell.
+- `:trigsample` accepts fractional MIDI notes (`0.0-127.0`) and dB gain (`-96.0` to `0.0`).
+- Windows `uedit` remains single-entry interactive recall even though `.ks2` keeps a log of entered lines.
 - The richer DSP engine and the restored old KSynth patch model are both present, but not yet deeply unified.
 - Browser/WASM host integration is not the current native shell focus yet.
 - The REPL help/examples are serviceable, but still not a polished end-user shell.
@@ -119,14 +191,12 @@ The engine code in [src/dsp.c](/home/stewartj/book/ks2/src/dsp.c) is intentional
 
 Recommended order:
 
-1. Add shell commands for triggering banked sample slots at pitch, for example `:trigsample <slot> <note> <vel>`.
-2. Add shell commands for using banked wavetable slots more directly, for example `:usewt <a> <b>`.
-3. Decide how DSL-generated assets should feed the richer engine:
+1. Decide how DSL-generated assets should feed the richer engine:
    - generated wavetable -> oscillator source
    - generated one-shot -> sample slot
    - generated vectors -> sequence or modulation sources
-4. Gradually integrate the advanced engine features behind the restored DSL model instead of alongside it.
-5. Only consider bytecode/VM work after the language/runtime semantics are stable.
+2. Gradually integrate the advanced engine features behind the restored DSL model instead of alongside it.
+3. Only consider bytecode/VM work after the language/runtime semantics are stable.
 
 ## Machine Migration Notes
 
@@ -139,8 +209,8 @@ Recommended workflow:
    - `src/`
    - `include/`
    - `ks/`
-   - `miniaudio/`
-   - `include/uedit.h`
+   - `vendor/`
+   - `VERSION`
    - `Makefile`
    - `STATUS.md`
 3. On the new machine:
@@ -169,4 +239,6 @@ One-shot patch:
 :playsample W
 :sample 2 W
 :slots
+:trigsample 2 60 -6
+:trigsample 2 60.5 -9
 ```

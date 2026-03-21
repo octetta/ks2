@@ -7,6 +7,34 @@ typedef struct K {
     double f[]; // flexible array member
 } K;
 
+typedef struct KSEngineModState {
+    float lfo_rate_hz;
+    float lfo_depth;
+    float pd_amount;
+    float detune_a_cents;
+    float detune_b_cents;
+    float filter_env_depth;
+    float pitch_env_depth;
+    float pd_env_depth;
+    float amp_attack_ms;
+    float amp_decay_ms;
+    float amp_sustain;
+    float amp_release_ms;
+    float pd_attack_ms;
+    float pd_decay_ms;
+    float pd_sustain;
+    float pd_release_ms;
+    float pitch_attack_ms;
+    float pitch_decay_ms;
+    float pitch_sustain;
+    float pitch_release_ms;
+} KSEngineModState;
+
+typedef enum KSChannelMode {
+    KS_CHANNEL_POLY = 0,
+    KS_CHANNEL_MONO = 1
+} KSChannelMode;
+
 K* k_new(int n);
 void k_free(K* x);
 K* k_get(char name);
@@ -28,13 +56,26 @@ void ksynth_engine_set_bpm(float bpm);
 void ksynth_engine_set_gain(float gain);
 void ksynth_engine_set_step(int index, int semitone);
 void ksynth_engine_set_waveforms(int osc_a, int osc_b);
+void ksynth_engine_set_lfo(float rate_hz, float depth);
+void ksynth_engine_set_detune(float cents_a, float cents_b);
 void ksynth_engine_set_pd(float amount);
+void ksynth_engine_set_filter_env_depth(float amount);
+void ksynth_engine_set_pitch_env_depth(float amount);
+void ksynth_engine_set_pd_env_depth(float amount);
+void ksynth_engine_set_amp_adsr(float attack_ms, float decay_ms, float sustain_level, float release_ms);
+void ksynth_engine_set_pd_adsr(float attack_ms, float decay_ms, float sustain_level, float release_ms);
+void ksynth_engine_set_pitch_adsr(float attack_ms, float decay_ms, float sustain_level, float release_ms);
+void ksynth_engine_get_mod_state(KSEngineModState *out_state);
+void ksynth_engine_set_channel_mode(int channel, KSChannelMode mode);
+void ksynth_engine_set_channel_glide_ms(int channel, float glide_ms);
+void ksynth_engine_note_on_ch(int channel, int note, float velocity);
+void ksynth_engine_note_off_ch(int channel, int note);
 void ksynth_engine_note_on(int note, float velocity);
 void ksynth_engine_all_notes_off(void);
 void ksynth_engine_set_table(int slot, const double *data, int length);
 void ksynth_engine_use_tables(int osc_a_slot, int osc_b_slot);
 void ksynth_engine_set_sample(int slot, const double *data, int length);
-void ksynth_engine_play_sample(int slot, int note, float velocity);
+void ksynth_engine_play_sample(int slot, float note, float velocity);
 void ksynth_engine_set_sequence(const double *data, int length);
 void ksynth_engine_start_transport(void);
 void ksynth_engine_stop_transport(void);

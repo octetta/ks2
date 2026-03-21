@@ -16,6 +16,7 @@
 #define KS_MAX_TABLE_LEN 2048
 #define KS_MAX_SAMPLE_SLOTS 16
 #define KS_MAX_SAMPLE_VOICES 8
+#define KS_MAX_CHANNELS 16
 #define KS_TWO_PI (2.0f * (float)M_PI)
 
 typedef enum {
@@ -67,8 +68,12 @@ typedef struct {
 
 typedef struct {
     int active;
+    int channel;
+    int held;
     int note;
     float base_freq;
+    float target_freq;
+    int glide_samples;
     float velocity;
     float phase[2];
     float detune[2];
@@ -78,6 +83,7 @@ typedef struct {
     float pd_amount;
     float filter_env_depth;
     float pitch_env_depth;
+    float pd_env_depth;
     Envelope amp_env;
     Envelope pd_env;
     Envelope pitch_env;
@@ -95,6 +101,14 @@ typedef struct {
 } SampleVoice;
 
 typedef struct {
+    KSChannelMode mode;
+    float glide_ms;
+    unsigned char held[128];
+    int stack[128];
+    int stack_len;
+} ChannelState;
+
+typedef struct {
     int sample_rate;
     float master_gain;
     float bpm;
@@ -104,15 +118,23 @@ typedef struct {
     float lfo_phase;
     float lfo_rate;
     float lfo_depth;
+    float default_detune[2];
     KSWaveform default_wave_a;
     KSWaveform default_wave_b;
     int default_table_slot_a;
     int default_table_slot_b;
     float default_pd_amount;
+    float default_filter_env_depth;
+    float default_pitch_env_depth;
+    float default_pd_env_depth;
+    float amp_adsr[4];
+    float pd_adsr[4];
+    float pitch_adsr[4];
     WaveTable tables[KS_MAX_TABLES];
     SampleSlot samples[KS_MAX_SAMPLE_SLOTS];
     Voice voices[KS_MAX_VOICES];
     SampleVoice sample_voices[KS_MAX_SAMPLE_VOICES];
+    ChannelState channels[KS_MAX_CHANNELS];
     unsigned char steps[KS_STEPS];
     float note_hz[KS_STEPS];
     EnvelopeSpec amp_spec;
@@ -145,6 +167,60 @@ static float wrap_phase(float phase) {
 
 static float midi_to_hz(int note) {
     return 440.0f * powf(2.0f, (float)(note - 69) / 12.0f);
+}
+
+static float ratio_to_cents(float ratio) {
+    if (ratio <= 0.0f) {
+        return 0.0f;
+    }
+    return 1200.0f * (logf(ratio) / logf(2.0f));
+}
+
+static float ms_to_sec(float ms) {
+    return clampf(ms / 1000.0f, 0.001f, 8.0f);
+}
+
+static void configure_adsr(EnvelopeSpec *spec, float attack_ms, float decay_ms, float sustain_level, float release_ms) {
+    float a;
+    float d;
+    float r;
+    float s;
+
+    if (!spec) {
+        return;
+    }
+
+    a = ms_to_sec(attack_ms);
+    d = ms_to_sec(decay_ms);
+    r = ms_to_sec(release_ms);
+    s = sustain_level;
+
+    spec->stages = 8;
+    spec->sustain_stage = 4;
+    spec->release_stage = 5;
+    spec->level[0] = 0.0f;
+    spec->level[1] = 1.0f;
+    spec->level[2] = s;
+    spec->level[3] = s;
+    spec->level[4] = s;
+    spec->level[5] = s * 0.35f;
+    spec->level[6] = s * 0.1f;
+    spec->level[7] = 0.0f;
+    spec->time[0] = 0.001f;
+    spec->time[1] = a;
+    spec->time[2] = d;
+    spec->time[3] = 0.001f;
+    spec->time[4] = 0.001f;
+    spec->time[5] = clampf(r * 0.40f, 0.001f, 8.0f);
+    spec->time[6] = clampf(r * 0.35f, 0.001f, 8.0f);
+    spec->time[7] = clampf(r * 0.25f, 0.001f, 8.0f);
+}
+
+static void store_adsr(float out[4], float attack_ms, float decay_ms, float sustain_level, float release_ms) {
+    out[0] = attack_ms;
+    out[1] = decay_ms;
+    out[2] = sustain_level;
+    out[3] = release_ms;
 }
 
 static void envelope_begin_stage(Envelope *env, int stage) {
@@ -315,26 +391,65 @@ static Voice* allocate_voice(void) {
     return &g_engine.voices[quietest];
 }
 
-static void trigger_voice(float hz, float velocity, int note) {
-    Voice *voice = allocate_voice();
+static void release_voice(Voice *voice) {
+    if (!voice || !voice->active) {
+        return;
+    }
+    voice->held = 0;
+    envelope_release(&voice->amp_env);
+    envelope_release(&voice->pd_env);
+    envelope_release(&voice->pitch_env);
+}
+
+static Voice* find_mono_voice_for_channel(int channel) {
+    int i;
+
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        if (g_engine.voices[i].active && g_engine.voices[i].channel == channel) {
+            return &g_engine.voices[i];
+        }
+    }
+    return NULL;
+}
+
+static Voice* find_voice_for_channel_note(int channel, int note) {
+    int i;
+
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        if (g_engine.voices[i].active && g_engine.voices[i].channel == channel && g_engine.voices[i].note == note) {
+            return &g_engine.voices[i];
+        }
+    }
+    return NULL;
+}
+
+static void start_voice(Voice *voice, int channel, int note, float hz, float velocity) {
+    if (!voice) {
+        return;
+    }
 
     memset(voice, 0, sizeof(*voice));
     voice->active = 1;
+    voice->channel = channel;
+    voice->held = 1;
     voice->note = note;
     voice->base_freq = hz;
+    voice->target_freq = hz;
+    voice->glide_samples = 0;
     voice->velocity = velocity;
     voice->phase[0] = 0.0f;
     voice->phase[1] = 0.25f;
-    voice->detune[0] = 0.997f;
-    voice->detune[1] = 1.005f;
+    voice->detune[0] = g_engine.default_detune[0];
+    voice->detune[1] = g_engine.default_detune[1];
     voice->mix[0] = 0.55f;
     voice->mix[1] = 0.45f;
     voice->width = 0.32f;
     voice->pd_amount = g_engine.default_pd_amount;
     voice->filter.cutoff = 1400.0f;
     voice->filter.resonance = 0.42f;
-    voice->filter_env_depth = 1800.0f;
-    voice->pitch_env_depth = 0.08f;
+    voice->filter_env_depth = g_engine.default_filter_env_depth;
+    voice->pitch_env_depth = g_engine.default_pitch_env_depth;
+    voice->pd_env_depth = g_engine.default_pd_env_depth;
     voice->wave_a = g_engine.default_wave_a;
     voice->wave_b = g_engine.default_wave_b;
     voice->table_slot[0] = g_engine.default_table_slot_a;
@@ -343,6 +458,37 @@ static void trigger_voice(float hz, float velocity, int note) {
     envelope_init(&voice->amp_env, &g_engine.amp_spec);
     envelope_init(&voice->pd_env, &g_engine.pd_spec);
     envelope_init(&voice->pitch_env, &g_engine.pitch_spec);
+}
+
+static void set_voice_target_note(Voice *voice, int note, float velocity, float glide_ms) {
+    float hz;
+    int glide_samples;
+
+    if (!voice) {
+        return;
+    }
+
+    hz = midi_to_hz(note);
+    voice->note = note;
+    voice->velocity = velocity;
+    voice->held = 1;
+    voice->target_freq = hz;
+    if (glide_ms <= 0.0f) {
+        voice->base_freq = hz;
+        voice->glide_samples = 0;
+        return;
+    }
+
+    glide_samples = (int)((glide_ms / 1000.0f) * (float)g_engine.sample_rate);
+    if (glide_samples < 1) {
+        glide_samples = 1;
+    }
+    voice->glide_samples = glide_samples;
+}
+
+static void trigger_voice(int channel, float hz, float velocity, int note) {
+    Voice *voice = allocate_voice();
+    start_voice(voice, channel, note, hz, velocity);
 }
 
 static void release_finished_steps(void) {
@@ -380,7 +526,7 @@ static void advance_step_sequencer(float dt) {
         release_finished_steps();
         if (g_engine.steps[g_engine.current_step]) {
             int note = 48 + (int)g_engine.steps[g_engine.current_step];
-            trigger_voice(g_engine.note_hz[g_engine.current_step], 0.8f, note);
+            trigger_voice(0, g_engine.note_hz[g_engine.current_step], 0.8f, note);
         }
     }
 }
@@ -409,8 +555,15 @@ static float render_voice(Voice *voice, float dt, float lfo_value) {
         return 0.0f;
     }
 
+    if (voice->glide_samples > 0) {
+        voice->base_freq += (voice->target_freq - voice->base_freq) / (float)voice->glide_samples;
+        voice->glide_samples--;
+    } else {
+        voice->base_freq = voice->target_freq;
+    }
+
     freq_base = voice->base_freq * (1.0f + voice->pitch_env_depth * pitch_env + g_engine.lfo_depth * lfo_value);
-    pd_amount = clampf(voice->pd_amount + pd_env * 0.6f, -0.95f, 0.95f);
+    pd_amount = clampf(voice->pd_amount + pd_env * voice->pd_env_depth, -0.95f, 0.95f);
 
     voice->phase[0] = wrap_phase(voice->phase[0] + (freq_base * voice->detune[0]) / (float)g_engine.sample_rate);
     voice->phase[1] = wrap_phase(voice->phase[1] + (freq_base * voice->detune[1]) / (float)g_engine.sample_rate);
@@ -476,6 +629,7 @@ static float render_sample_voice(SampleVoice *voice) {
 
 static void load_default_patch(void) {
     int i;
+    int ch;
     static const unsigned char pattern[KS_STEPS] = {
         12, 0, 19, 0, 15, 0, 22, 0,
         12, 0, 24, 0, 19, 0, 15, 0
@@ -485,15 +639,23 @@ static void load_default_patch(void) {
     g_engine.sample_rate = 44100;
     g_engine.master_gain = 0.18f;
     g_engine.bpm = 118.0f;
-    g_engine.transport_running = 1;
+    g_engine.transport_running = 0;
     g_engine.current_step = KS_STEPS - 1;
     g_engine.lfo_rate = 5.2f;
     g_engine.lfo_depth = 0.012f;
+    g_engine.default_detune[0] = 0.997f;
+    g_engine.default_detune[1] = 1.005f;
     g_engine.default_wave_a = KS_WAVE_SAW;
     g_engine.default_wave_b = KS_WAVE_PULSE;
     g_engine.default_table_slot_a = 0;
     g_engine.default_table_slot_b = 1;
     g_engine.default_pd_amount = 0.35f;
+    g_engine.default_filter_env_depth = 1800.0f;
+    g_engine.default_pitch_env_depth = 0.08f;
+    g_engine.default_pd_env_depth = 0.60f;
+    store_adsr(g_engine.amp_adsr, 10.0f, 60.0f, 0.72f, 300.0f);
+    store_adsr(g_engine.pd_adsr, 20.0f, 40.0f, 0.20f, 160.0f);
+    store_adsr(g_engine.pitch_adsr, 15.0f, 80.0f, -0.04f, 140.0f);
     g_engine.tables[0].length = 256;
     g_engine.tables[1].length = 256;
     for (i = 0; i < 256; i++) {
@@ -561,6 +723,13 @@ static void load_default_patch(void) {
     g_engine.pitch_spec.time[5] = 0.05f;
     g_engine.pitch_spec.time[6] = 0.05f;
     g_engine.pitch_spec.time[7] = 0.05f;
+
+    for (ch = 0; ch < KS_MAX_CHANNELS; ch++) {
+        g_engine.channels[ch].mode = KS_CHANNEL_POLY;
+        g_engine.channels[ch].glide_ms = 0.0f;
+        g_engine.channels[ch].stack_len = 0;
+        memset(g_engine.channels[ch].held, 0, sizeof(g_engine.channels[ch].held));
+    }
 
     for (i = 0; i < KS_STEPS; i++) {
         int note = 48 + pattern[i];
@@ -672,6 +841,33 @@ void ksynth_engine_set_waveforms(int osc_a, int osc_b) {
     }
 }
 
+void ksynth_engine_set_lfo(float rate_hz, float depth) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.lfo_rate = clampf(rate_hz, 0.0f, 40.0f);
+    g_engine.lfo_depth = clampf(depth, 0.0f, 0.25f);
+}
+
+void ksynth_engine_set_detune(float cents_a, float cents_b) {
+    int i;
+    float ca;
+    float cb;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+
+    ca = clampf(cents_a, -100.0f, 100.0f);
+    cb = clampf(cents_b, -100.0f, 100.0f);
+    g_engine.default_detune[0] = powf(2.0f, ca / 1200.0f);
+    g_engine.default_detune[1] = powf(2.0f, cb / 1200.0f);
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        g_engine.voices[i].detune[0] = g_engine.default_detune[0];
+        g_engine.voices[i].detune[1] = g_engine.default_detune[1];
+    }
+}
+
 void ksynth_engine_set_pd(float amount) {
     int i;
     float clamped;
@@ -687,17 +883,234 @@ void ksynth_engine_set_pd(float amount) {
     }
 }
 
-void ksynth_engine_note_on(int note, float velocity) {
+void ksynth_engine_set_filter_env_depth(float amount) {
+    int i;
+    float v;
+
     if (!g_engine_ready) {
         ksynth_engine_init(44100);
     }
+    v = clampf(amount, -8000.0f, 8000.0f);
+    g_engine.default_filter_env_depth = v;
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        g_engine.voices[i].filter_env_depth = v;
+    }
+}
+
+void ksynth_engine_set_pitch_env_depth(float amount) {
+    int i;
+    float v;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    v = clampf(amount, -1.0f, 1.0f);
+    g_engine.default_pitch_env_depth = v;
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        g_engine.voices[i].pitch_env_depth = v;
+    }
+}
+
+void ksynth_engine_set_pd_env_depth(float amount) {
+    int i;
+    float v;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    v = clampf(amount, -2.0f, 2.0f);
+    g_engine.default_pd_env_depth = v;
+    for (i = 0; i < KS_MAX_VOICES; i++) {
+        g_engine.voices[i].pd_env_depth = v;
+    }
+}
+
+void ksynth_engine_set_amp_adsr(float attack_ms, float decay_ms, float sustain_level, float release_ms) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    store_adsr(g_engine.amp_adsr, attack_ms, decay_ms, clampf(sustain_level, 0.0f, 1.2f), release_ms);
+    configure_adsr(&g_engine.amp_spec, attack_ms, decay_ms, clampf(sustain_level, 0.0f, 1.2f), release_ms);
+}
+
+void ksynth_engine_set_pd_adsr(float attack_ms, float decay_ms, float sustain_level, float release_ms) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    store_adsr(g_engine.pd_adsr, attack_ms, decay_ms, clampf(sustain_level, 0.0f, 1.2f), release_ms);
+    configure_adsr(&g_engine.pd_spec, attack_ms, decay_ms, clampf(sustain_level, 0.0f, 1.2f), release_ms);
+}
+
+void ksynth_engine_set_pitch_adsr(float attack_ms, float decay_ms, float sustain_level, float release_ms) {
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    store_adsr(g_engine.pitch_adsr, attack_ms, decay_ms, clampf(sustain_level, -1.0f, 1.0f), release_ms);
+    configure_adsr(&g_engine.pitch_spec, attack_ms, decay_ms, clampf(sustain_level, -1.0f, 1.0f), release_ms);
+}
+
+void ksynth_engine_get_mod_state(KSEngineModState *out_state) {
+    if (!out_state) {
+        return;
+    }
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+
+    out_state->lfo_rate_hz = g_engine.lfo_rate;
+    out_state->lfo_depth = g_engine.lfo_depth;
+    out_state->pd_amount = g_engine.default_pd_amount;
+    out_state->detune_a_cents = ratio_to_cents(g_engine.default_detune[0]);
+    out_state->detune_b_cents = ratio_to_cents(g_engine.default_detune[1]);
+    out_state->filter_env_depth = g_engine.default_filter_env_depth;
+    out_state->pitch_env_depth = g_engine.default_pitch_env_depth;
+    out_state->pd_env_depth = g_engine.default_pd_env_depth;
+    out_state->amp_attack_ms = g_engine.amp_adsr[0];
+    out_state->amp_decay_ms = g_engine.amp_adsr[1];
+    out_state->amp_sustain = g_engine.amp_adsr[2];
+    out_state->amp_release_ms = g_engine.amp_adsr[3];
+    out_state->pd_attack_ms = g_engine.pd_adsr[0];
+    out_state->pd_decay_ms = g_engine.pd_adsr[1];
+    out_state->pd_sustain = g_engine.pd_adsr[2];
+    out_state->pd_release_ms = g_engine.pd_adsr[3];
+    out_state->pitch_attack_ms = g_engine.pitch_adsr[0];
+    out_state->pitch_decay_ms = g_engine.pitch_adsr[1];
+    out_state->pitch_sustain = g_engine.pitch_adsr[2];
+    out_state->pitch_release_ms = g_engine.pitch_adsr[3];
+}
+
+static void channel_stack_remove(ChannelState *ch, int note) {
+    int i;
+    int j;
+
+    if (!ch) {
+        return;
+    }
+    for (i = 0; i < ch->stack_len; i++) {
+        if (ch->stack[i] == note) {
+            for (j = i; j < ch->stack_len - 1; j++) {
+                ch->stack[j] = ch->stack[j + 1];
+            }
+            ch->stack_len--;
+            return;
+        }
+    }
+}
+
+static void channel_stack_push(ChannelState *ch, int note) {
+    if (!ch) {
+        return;
+    }
+    channel_stack_remove(ch, note);
+    if (ch->stack_len < (int)(sizeof(ch->stack) / sizeof(ch->stack[0]))) {
+        ch->stack[ch->stack_len++] = note;
+    }
+}
+
+static int normalize_channel(int channel) {
+    if (channel < 0) {
+        return 0;
+    }
+    if (channel >= KS_MAX_CHANNELS) {
+        return KS_MAX_CHANNELS - 1;
+    }
+    return channel;
+}
+
+void ksynth_engine_set_channel_mode(int channel, KSChannelMode mode) {
+    channel = normalize_channel(channel);
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.channels[channel].mode = mode == KS_CHANNEL_MONO ? KS_CHANNEL_MONO : KS_CHANNEL_POLY;
+}
+
+void ksynth_engine_set_channel_glide_ms(int channel, float glide_ms) {
+    channel = normalize_channel(channel);
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+    g_engine.channels[channel].glide_ms = clampf(glide_ms, 0.0f, 5000.0f);
+}
+
+void ksynth_engine_note_on_ch(int channel, int note, float velocity) {
+    ChannelState *ch;
+    float hz;
+    float vel;
+    Voice *voice;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+
+    channel = normalize_channel(channel);
     if (note < 24) {
         note = 24;
     }
     if (note > 96) {
         note = 96;
     }
-    trigger_voice(midi_to_hz(note), clampf(velocity, 0.0f, 1.0f), note);
+    hz = midi_to_hz(note);
+    vel = clampf(velocity, 0.0f, 1.0f);
+    ch = &g_engine.channels[channel];
+
+    if (ch->mode == KS_CHANNEL_MONO) {
+        channel_stack_push(ch, note);
+        ch->held[note] = 1;
+        voice = find_mono_voice_for_channel(channel);
+        if (!voice) {
+            voice = allocate_voice();
+            start_voice(voice, channel, note, hz, vel);
+        } else {
+            set_voice_target_note(voice, note, vel, ch->glide_ms);
+        }
+        return;
+    }
+
+    ch->held[note] = 1;
+    voice = allocate_voice();
+    start_voice(voice, channel, note, hz, vel);
+}
+
+void ksynth_engine_note_off_ch(int channel, int note) {
+    ChannelState *ch;
+    Voice *voice;
+
+    if (!g_engine_ready) {
+        ksynth_engine_init(44100);
+    }
+
+    channel = normalize_channel(channel);
+    if (note < 24) {
+        note = 24;
+    }
+    if (note > 96) {
+        note = 96;
+    }
+    ch = &g_engine.channels[channel];
+    ch->held[note] = 0;
+
+    if (ch->mode == KS_CHANNEL_MONO) {
+        voice = find_mono_voice_for_channel(channel);
+        channel_stack_remove(ch, note);
+        if (!voice) {
+            return;
+        }
+        if (ch->stack_len > 0) {
+            int next_note = ch->stack[ch->stack_len - 1];
+            set_voice_target_note(voice, next_note, voice->velocity, ch->glide_ms);
+            return;
+        }
+        release_voice(voice);
+        return;
+    }
+
+    voice = find_voice_for_channel_note(channel, note);
+    release_voice(voice);
+}
+
+void ksynth_engine_note_on(int note, float velocity) {
+    ksynth_engine_note_on_ch(0, note, velocity);
 }
 
 void ksynth_engine_all_notes_off(void) {
@@ -708,9 +1121,7 @@ void ksynth_engine_all_notes_off(void) {
     }
     for (i = 0; i < KS_MAX_VOICES; i++) {
         if (g_engine.voices[i].active) {
-            envelope_release(&g_engine.voices[i].amp_env);
-            envelope_release(&g_engine.voices[i].pd_env);
-            envelope_release(&g_engine.voices[i].pitch_env);
+            release_voice(&g_engine.voices[i]);
         }
     }
 }
@@ -824,7 +1235,7 @@ void ksynth_engine_set_sample(int slot, const double *data, int length) {
     g_engine.samples[slot].root_note = 60;
 }
 
-void ksynth_engine_play_sample(int slot, int note, float velocity) {
+void ksynth_engine_play_sample(int slot, float note, float velocity) {
     SampleVoice *voice;
     SampleSlot *sample_slot;
     float step;
@@ -841,7 +1252,7 @@ void ksynth_engine_play_sample(int slot, int note, float velocity) {
         return;
     }
 
-    step = powf(2.0f, (float)(note - sample_slot->root_note) / 12.0f);
+    step = powf(2.0f, (note - (float)sample_slot->root_note) / 12.0f);
     voice = allocate_sample_voice();
     memset(voice, 0, sizeof(*voice));
     voice->active = 1;

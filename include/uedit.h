@@ -21,6 +21,19 @@
 /* Single-entry history; one slot per uedit() call site is typical usage */
 static char uedit_last_cmd[UEDIT_MAX_LINE] = {0};
 
+static void uedit_history_set_last(const char *line) {
+    if (!line) {
+        uedit_last_cmd[0] = '\0';
+        return;
+    }
+    strncpy(uedit_last_cmd, line, UEDIT_MAX_LINE - 1);
+    uedit_last_cmd[UEDIT_MAX_LINE - 1] = '\0';
+}
+
+static const char* uedit_history_get_last(void) {
+    return uedit_last_cmd;
+}
+
 #ifndef _WIN32
 static struct termios uedit_orig_termios;
 
