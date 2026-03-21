@@ -55,6 +55,57 @@ static FILE *g_history_file = NULL;
 #define KS_REPL_MAX_LINE UEDIT_MAX_LINE
 #else
 #define KS_REPL_MAX_LINE 4096
+
+static const char *g_repl_commands[] = {
+    ":help", ":h",
+    ":version",
+    ":quit", ":q",
+    ":load",
+    ":script",
+    ":play",
+    ":playwt",
+    ":playwtraw",
+    ":playsample",
+    ":stop",
+    ":start",
+    ":wt",
+    ":usewt",
+    ":sample",
+    ":slot",
+    ":trigsample",
+    ":lfo",
+    ":pd",
+    ":detune",
+    ":envamp",
+    ":envpd",
+    ":envpitch",
+    ":envdepth",
+    ":modstate",
+    ":chmode",
+    ":glide",
+    ":noteon",
+    ":noteoff",
+    ":sleep",
+    ":slots",
+    NULL
+};
+
+static void ks_repl_completion_callback(const char *line, int pos, bestlineCompletions *lc) {
+    int i;
+    size_t input_len;
+
+    (void)pos;
+    if (!line || line[0] != ':') {
+        return;
+    }
+
+    input_len = strlen(line);
+    for (i = 0; g_repl_commands[i]; i++) {
+        if (strncmp(g_repl_commands[i], line, input_len) == 0) {
+            bestlineAddCompletion(lc, g_repl_commands[i]);
+        }
+    }
+}
 #endif
 
 static int ks_readline(const char *prompt, char *buf, int max_line) {
@@ -195,6 +246,7 @@ static void ks_history_init(void) {
     }
     g_history_file = fopen(g_history_path, "a");
 #else
+    bestlineSetCompletionCallback(ks_repl_completion_callback);
     bestlineHistoryLoad(g_history_path);
 #endif
 }
@@ -994,8 +1046,7 @@ int main(void) {
     }
 
     audio_start();
-    print_repl_help();
-    puts("");
+    printf("KSynth v%s — to learn what to do next, enter :help<ret>\n\n", KS2_VERSION);
 
     while (1) {
         K* result;

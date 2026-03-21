@@ -75,6 +75,11 @@ REPL history persistence:
 - Linux/macOS: uses `bestline` history loaded/saved from `~/.ks2`.
 - Windows: appends entered lines to `%USERPROFILE%\\.ks2` (or `%HOMEDRIVE%%HOMEPATH%\\.ks2`) and restores last command for `uedit` Up-arrow recall.
 
+REPL completion:
+
+- Linux/macOS (`bestline`) now provides basic tab-completion for `:` host commands.
+- Non-`:` lines (KSynth DSL/K input) intentionally do not receive command completion.
+
 REPL interrupt behavior:
 
 - `Ctrl-C` once: does not exit; prints a warning and silences active synth voices.
