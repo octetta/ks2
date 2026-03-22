@@ -20,7 +20,7 @@ ifneq (,$(findstring msys,$(CC_MACHINE)))
 endif
 
 CFLAGS = -I. -Iinclude -Ivendor/miniaudio -O2 -std=c99 -DKS2_VERSION=\"$(VERSION)\"
-SRC = src/main.c src/ksynth.c src/dsp.c src/audio.c src/miniaudio.c
+SRC = src/main.c src/ksynth.c src/dsp.c src/audio.c src/miniaudio.c src/udp.c
 
 ifeq ($(IS_WINDOWS),0)
   CFLAGS += -Ivendor/bestline

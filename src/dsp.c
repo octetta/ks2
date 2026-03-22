@@ -1060,8 +1060,8 @@ void ksynth_engine_set_lfo(float rate_hz, float depth) {
     if (!g_engine_ready) {
         ksynth_engine_init(44100);
     }
-    g_engine.lfo_rate = clampf(rate_hz, 0.0f, 40.0f);
-    g_engine.lfo_depth = clampf(depth, 0.0f, 0.25f);
+    g_engine.lfo_rate = clampf(rate_hz, 0.0f, 1760.0f);
+    g_engine.lfo_depth = clampf(depth, 0.0f, 10.0f);
 }
 
 void ksynth_engine_set_detune(float cents_a, float cents_b) {
@@ -1073,8 +1073,9 @@ void ksynth_engine_set_detune(float cents_a, float cents_b) {
         ksynth_engine_init(44100);
     }
 
-    ca = clampf(cents_a, -100.0f, 100.0f);
-    cb = clampf(cents_b, -100.0f, 100.0f);
+#define DETUNE_LIMIT (4800.f)
+    ca = clampf(cents_a, -(DETUNE_LIMIT), (DETUNE_LIMIT));
+    cb = clampf(cents_b, -(DETUNE_LIMIT), (DETUNE_LIMIT));
     g_engine.default_detune[0] = powf(2.0f, ca / 1200.0f);
     g_engine.default_detune[1] = powf(2.0f, cb / 1200.0f);
     for (i = 0; i < KS_MAX_VOICES; i++) {
@@ -1370,7 +1371,7 @@ void ksynth_engine_set_channel_pan_lfo_depth(int channel, float depth) {
     if (!g_engine_ready) {
         ksynth_engine_init(44100);
     }
-    g_engine.channels[channel].pan_lfo_depth = clampf(depth, 0.0f, 1.0f);
+    g_engine.channels[channel].pan_lfo_depth = clampf(depth, 0.0f, 10.0f);
 }
 
 void ksynth_engine_set_channel_delay_send(int channel, float send) {
@@ -1414,14 +1415,14 @@ void ksynth_engine_note_on_ch(int channel, int note, float velocity) {
     }
 
     channel = normalize_channel(channel);
-    if (note < 24) {
-        note = 24;
+    if (note < 0) {
+        note = 0;
     }
-    if (note > 96) {
-        note = 96;
+    if (note > 127) {
+        note = 127;
     }
     hz = midi_to_hz(note);
-    vel = clampf(velocity, 0.0f, 1.0f);
+    vel = clampf(velocity, 0.0f, 10.0f);
     ch = &g_engine.channels[channel];
 
     if (ch->mode == KS_CHANNEL_MONO) {
@@ -1451,11 +1452,11 @@ void ksynth_engine_note_off_ch(int channel, int note) {
     }
 
     channel = normalize_channel(channel);
-    if (note < 24) {
-        note = 24;
+    if (note < 0) {
+        note = 0;
     }
-    if (note > 96) {
-        note = 96;
+    if (note > 127) {
+        note = 127;
     }
     ch = &g_engine.channels[channel];
     ch->held[note] = 0;

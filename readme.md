@@ -77,38 +77,38 @@ Build tables using the phase accumulator pattern, using a separate variable for 
 
 ```
 / sine at 440 Hz for 2 seconds
-N: 1024
-P: +\(N#(p2%N))
-T: s P
-D: p0*2
-W: w T t 440 D
+N: 1024         / size of one cycle of wavetable
+P: +\(N#(p2%N)) / phase from 0/1024 to 1024/1024
+T: s P          / one cycle of sine
+D: p0*2         / two second sample count at sample rate
+W: w T t 440 D  / make sine with DDS at 440Hz
 ```
 
 ```
 / sawtooth at 220 Hz for 1 second
 N: 1024
 P: +\(N#(1%N))
-T: (2*P)-1
-D: p0
-W: w T t 220 D
+T: (2*P)-1     / one cycle of sawtooth
+D: p0          / one second sample count at sample rate
+W: w T t 220 D / make saw with DDS at 220Hz
 ```
 
 ```
 / triangle at 330 Hz for 1 second
 N: 1024
 P: +\(N#(1%N))
-T: (2*a((2*P)-1))-1
+T: (2*a((2*P)-1))-1 / one cycle of triangle
 D: p0
-W: w T t 330 D
+W: w T t 330 D      / make tri with DDS at 330Hz
 ```
 
 ```
 / square wave at 220 Hz for 1 second
 N: 1024
 P: +\(N#(1%N))
-T: (2*(P<0.5))-1
+T: (2*(P<0.5))-1  / one cycle of square
 D: p0
-W: w T t 220 D
+W: w T t 220 D    / make square with DDS at 220Hz
 ```
 
 ```
@@ -148,8 +148,8 @@ N: p0*2
 T: !N
 A: e(T*(0-3%N))
 I: 3.5*e(T*(0-40%N))
-C: 440*(p2%p0)
-M: 440*(p2%p0)
+C: 440*(p2%p0) / carrier
+M: 440*(p2%p0) / modulator
 P: +\(N#C)
 Q: +\(N#M)
 W: w A*(s P+(I*s Q))

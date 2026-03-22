@@ -8,6 +8,8 @@
 #include <signal.h>
 #include <dirent.h>
 
+#include <pthread.h>
+
 #if !defined(_WIN32)
 #include <unistd.h>
 #include <sys/select.h>
@@ -20,6 +22,7 @@
 
 #include "ksynth.h"
 #include "audio.h"
+#include "udp.h"
 
 #if defined(_WIN32)
 #include "uedit.h"
@@ -820,12 +823,12 @@ static int host_trigger_sample(int slot, float note, float gain_db) {
 }
 
 static int host_set_lfo(float rate_hz, float depth) {
-    if (rate_hz < 0.0f || rate_hz > 40.0f) {
-        puts("(lfo rate must be 0.0-40.0 Hz)");
+    if (rate_hz < 0.0f || rate_hz > 440.0f) {
+        puts("(lfo rate must be 0.0-440.0 Hz)");
         return -1;
     }
-    if (depth < 0.0f || depth > 0.25f) {
-        puts("(lfo depth must be 0.0-0.25)");
+    if (depth < 0.0f || depth > 10.00f) {
+        puts("(lfo depth must be 0.0-10.00)");
         return -1;
     }
     ksynth_engine_set_lfo(rate_hz, depth);
@@ -938,8 +941,9 @@ static int host_set_gain_db(float gain_db) {
     return 0;
 }
 
+#define DETUNE_LIMIT (4800.0f)
 static int host_set_detune(float cents_a, float cents_b) {
-    if (cents_a < -100.0f || cents_a > 100.0f || cents_b < -100.0f || cents_b > 100.0f) {
+    if (cents_a < -(DETUNE_LIMIT) || cents_a > (DETUNE_LIMIT) || cents_b < -(DETUNE_LIMIT) || cents_b > (DETUNE_LIMIT)) {
         puts("(detune cents must be -100.0 to 100.0)");
         return -1;
     }
@@ -1275,6 +1279,15 @@ static int process_input_line(const char *line) {
     }
     g_sigint_hits = 0;
     return 1;
+}
+
+static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static int raw_process_input_line(const char *line) {
+    pthread_mutex_lock(&mtx);
+    int n = process_input_line(line);
+    pthread_mutex_unlock(&mtx);
+    return n;
 }
 
 static int host_run_script(const char *path) {
@@ -1878,6 +1891,11 @@ static int handle_repl_command(const char *line) {
     return 1;
 }
 
+int process_wrap(char *line, size_t n) {
+  printf("process wrap\n");
+  process_input_line(line);
+}
+
 int main(void) {
     char line[KS_REPL_MAX_LINE];
     int i;
@@ -1891,6 +1909,7 @@ int main(void) {
     }
 
     audio_start();
+    udp_start(60441, process_wrap);
     printf("KSynth v%s — to learn what to do next, enter :help<ret>\n\n", KS2_VERSION);
 
     while (1) {
@@ -1922,6 +1941,7 @@ int main(void) {
         }
     }
 
+    udp_stop();
     audio_stop();
     audio_shutdown();
     ks_history_shutdown();

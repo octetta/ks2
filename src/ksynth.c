@@ -1113,7 +1113,8 @@ void p(K* x) {
         return;
     }
 
-    limit = x->n < 10 ? x->n : 10;
+#define K_PRINT_MAX (10)
+    limit = x->n < K_PRINT_MAX ? x->n : K_PRINT_MAX;
     putchar('(');
     for (i = 0; i < limit; i++) {
         if (i) {
